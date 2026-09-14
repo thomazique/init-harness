@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "deny": [
+      "Read(./.env)",
+      "Edit(./.env)"
+    ],
+    "ask": [
+      "Bash(git push *)",
+      "Edit(./.claude/settings.json)",
+      "Edit(./.init-harness/config.json)",
+      "Edit(./.claude/hooks/**)",
+      "Edit(./.githooks/**)",
+      "Edit(./.github/**)",
+      "Edit(./.mcp.json)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv",
+            "args": ["run", "--no-project", "--python", ">=3.10", "${CLAUDE_PROJECT_DIR}/.claude/hooks/session_start.py"],
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv",
+            "args": ["run", "--no-project", "--python", ">=3.10", "${CLAUDE_PROJECT_DIR}/.claude/hooks/guard_bash.py"],
+            "timeout": 60
+          }
+        ]
+      },
+      {
+        "matcher": "Read|Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv",
+            "args": ["run", "--no-project", "--python", ">=3.10", "${CLAUDE_PROJECT_DIR}/.claude/hooks/guard_files.py"],
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv",
+            "args": ["run", "--no-project", "--python", ">=3.10", "${CLAUDE_PROJECT_DIR}/.claude/hooks/pre_compact.py"],
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv",
+            "args": ["run", "--no-project", "--python", ">=3.10", "${CLAUDE_PROJECT_DIR}/.claude/hooks/stop_check.py"],
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}

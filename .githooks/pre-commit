@@ -1,0 +1,9 @@
+#!/bin/sh
+# .githooks/pre-commit — harness
+# Delegado ao Python via uv (mesmo lançador dos hooks do Claude Code).
+if ! command -v uv >/dev/null 2>&1; then
+  echo "harness: uv não encontrado no PATH. Instale o uv para commitar neste projeto (pré-requisito do harness)." >&2
+  exit 1
+fi
+ROOT=$(git rev-parse --show-toplevel)
+exec uv run --no-project --python ">=3.10" "$ROOT/.githooks/pre_commit.py"

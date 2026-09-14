@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/thomazique/init-harness/blob/main/.init-harness/schema/config.schema.json",
+  "title": "init-harness project configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "harness_version",
+    "modo",
+    "instalado_em",
+    "providers",
+    "grafo",
+    "frente_inativa_horas",
+    "autonomia",
+    "ambientes"
+  ],
+  "properties": {
+    "$schema": {"type": "string"},
+    "harness_version": {"const": "2.1.0"},
+    "modo": {"enum": ["proprio", "cliente"]},
+    "instalado_em": {"type": "string", "format": "date"},
+    "providers": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"enum": ["claude", "codex"]}
+    },
+    "grafo": {"enum": ["graphify", "manual"]},
+    "frente_inativa_horas": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "number", "minimum": 0}
+      ]
+    },
+    "autonomia": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tarefas_seguras", "apos_checkpoint", "producao", "destrutivo", "politica_negocio"],
+      "properties": {
+        "tarefas_seguras": {"enum": ["continuar", "parar"]},
+        "apos_checkpoint": {"enum": ["continuar", "parar"]},
+        "producao": {"enum": ["confirmar", "bloquear"]},
+        "destrutivo": {"enum": ["confirmar", "bloquear"]},
+        "politica_negocio": {"enum": ["confirmar", "bloquear"]}
+      }
+    },
+    "ambientes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["se_indeterminado", "regras"],
+      "properties": {
+        "se_indeterminado": {"enum": ["permitir", "confirmar", "bloquear"]},
+        "regras": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["nome", "arquivo", "chave", "valores", "destrutivo"],
+            "properties": {
+              "nome": {"type": "string", "minLength": 1},
+              "arquivo": {"type": "string", "minLength": 1},
+              "chave": {"type": "string", "minLength": 1},
+              "valores": {
+                "type": "array",
+                "minItems": 1,
+                "items": {"type": "string"}
+              },
+              "destrutivo": {"enum": ["permitir", "confirmar", "bloquear"]}
+            }
+          }
+        }
+      }
+    }
+  }
+}

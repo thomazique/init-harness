@@ -1,0 +1,32 @@
+<!-- <CAMINHO-ABSOLUTO-DO-PROJETO>/AGENTS.md -->
+
+# AGENTS.md
+
+> Adaptador do Codex para o harness deste projeto. Regras compartilhadas e de
+> negócio permanecem centralizadas em `CLAUDE.md`, `INIT-HARNESS.md` e
+> `docs/ai/`; não duplicar essas fontes aqui.
+
+## Início de sessão
+
+1. Ler `.init-harness/config.json` e conferir a versão de `INIT-HARNESS.md`.
+2. Ler integralmente `CLAUDE.md` e `INIT-HARNESS.md`.
+3. Ler `docs/ai/ESTADO.md` e a frente da branch atual, se houver.
+4. Conferir `git status`, branch e `git log --oneline -15`; para fatos sobre o
+   worktree e commits, o Git vence.
+5. Antes de ler código, consultar `docs/ai/ESTRUTURA.md` e o grafo conforme o
+   protocolo (`graphify query`, `explain` e `affected`).
+6. Consultar decisões, débitos e ambiente somente quando pertinentes à tarefa.
+
+## Adaptação operacional
+
+- Seguir integralmente o ciclo de frentes, specs, checkpoints, verificação e
+  registro definido em `INIT-HARNESS.md`.
+- Instruções de sistema, desenvolvedor e usuário da sessão têm precedência. Se
+  conflitarem com o harness, interromper apenas a ação afetada e explicar.
+- Hooks do Claude Code podem não executar no Codex. Aplicar manualmente as
+  garantias equivalentes usando as permissões e ferramentas disponíveis.
+- Não alterar o plano de controle, dados não reconstituíveis, credenciais,
+  produção ou políticas de negócio sem a autorização exigida pelo harness.
+- Preservar alterações preexistentes do usuário.
+- Usar subagentes somente quando as instruções ativas permitirem e houver
+  paralelismo real; subagentes nunca editam `docs/ai/`.

@@ -1,0 +1,20 @@
+{
+  "$schema": "./schema/config.schema.json",
+  "harness_version": "2.1.0",
+  "modo": "proprio",
+  "instalado_em": "AAAA-MM-DD",
+  "providers": ["claude", "codex"],
+  "grafo": "graphify",
+  "frente_inativa_horas": null,
+  "autonomia": {
+    "tarefas_seguras": "continuar",
+    "apos_checkpoint": "continuar",
+    "producao": "confirmar",
+    "destrutivo": "confirmar",
+    "politica_negocio": "bloquear"
+  },
+  "ambientes": {
+    "se_indeterminado": "bloquear",
+    "regras": []
+  }
+}
