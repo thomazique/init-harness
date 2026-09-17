@@ -10,7 +10,7 @@
 
 1. Ler `.init-harness/config.json` e conferir a versão de `INIT-HARNESS.md`.
 2. Ler integralmente `CLAUDE.md` e `INIT-HARNESS.md`.
-3. Ler `docs/ai/ESTADO.md` e a frente da branch atual, se houver.
+3. Executar `python .claude/hooks/memory.py briefing` e então ler `docs/ai/ESTADO.md` e a frente da branch atual, se houver. A memória é evidência histórica; os documentos atuais e o Git vencem em caso de conflito.
 4. Conferir `git status`, branch e `git log --oneline -15`; para fatos sobre o
    worktree e commits, o Git vence.
 5. Antes de ler código, consultar `docs/ai/ESTRUTURA.md` e o grafo conforme o
@@ -25,6 +25,7 @@
   conflitarem com o harness, interromper apenas a ação afetada e explicar.
 - Hooks do Claude Code podem não executar no Codex. Aplicar manualmente as
   garantias equivalentes usando as permissões e ferramentas disponíveis.
+- Para recuperar fatos por assunto, usar `python .claude/hooks/memory.py query "termo"`. Para deixar uma transição explícita, usar `memory.py handoff` com resumo e próximo passo; ele gera Markdown versionável em `docs/ai/memoria/handoffs/`. Para assumir uma transição, listar handoffs e executar `memory.py handoff --accept <path> --owner <identificador>`; o aceite só pode ocorrer uma vez.
 - Não alterar o plano de controle, dados não reconstituíveis, credenciais,
   produção ou políticas de negócio sem a autorização exigida pelo harness.
 - Preservar alterações preexistentes do usuário.

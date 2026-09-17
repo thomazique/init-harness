@@ -6,3 +6,8 @@ __pycache__/
 dist/
 build/
 *.egg-info/
+
+# Artefatos locais e reconstruíveis
+graphify-out/
+.init-harness/memory/
+.init-harness/state/

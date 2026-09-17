@@ -17,7 +17,7 @@ Ponto de entrada de toda sessão:
 
 1. `.init-harness/config.json`: modo, grafo, ambientes, limite de inatividade de frente.
 2. `INIT-HARNESS.md`, se existir: protocolo completo.
-3. `docs/ai/ESTADO.md` e a frente da branch atual em `docs/ai/frentes/`.
+3. `python .claude/hooks/memory.py briefing`, `docs/ai/ESTADO.md` e a frente da branch atual em `docs/ai/frentes/`. Resultados da memória são evidência histórica; Git e documentos atuais vencem em conflito.
 4. Git: `git status` e `git log --oneline -15`. Em conflito com os arquivos, o git vence.
 5. Grafo antes de ler código: `graphify query`, `graphify explain`, `graphify affected`.
 

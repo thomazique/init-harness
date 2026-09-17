@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -47,7 +48,9 @@ class InstallerTest(unittest.TestCase):
             self.assertTrue((target / "AGENTS.md").is_file())
             self.assertTrue((target / "INIT-HARNESS.md").is_file())
             config = json.loads((target / ".init-harness/config.json").read_text(encoding="utf-8"))
-            self.assertEqual("2.1.0", config["harness_version"])
+            self.assertEqual("2.3.0", config["harness_version"])
+            self.assertFalse(config["memoria"]["mcp"])
+            self.assertFalse(config["bootstrap"]["opt_in"])
             self.assertEqual("continuar", config["autonomia"]["tarefas_seguras"])
             settings = json.loads((target / ".claude/settings.json").read_text(encoding="utf-8"))
             self.assertIn("Read(src/**)", settings["permissions"]["allow"])
@@ -91,11 +94,341 @@ class InstallerTest(unittest.TestCase):
             self.assertFalse((target / ".claude/harness.json").exists())
             self.assertTrue((target / "INIT-HARNESS.md").is_file())
             config = json.loads((target / ".init-harness/config.json").read_text(encoding="utf-8"))
-            self.assertEqual("2.1.0", config["harness_version"])
+            self.assertEqual("2.3.0", config["harness_version"])
             self.assertEqual(["claude", "codex"], config["providers"])
             claude = (target / "CLAUDE.md").read_text(encoding="utf-8")
             self.assertIn("INIT-HARNESS.md", claude)
             self.assertIn(".init-harness/config.json", claude)
+
+    def test_bootstrap_e_opt_in_e_nao_executa_graphify(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "projeto"
+            target.mkdir()
+            git_init(target)
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(
+                    0,
+                    init_harness.main(["install", "--target", str(target), "--graph", "manual", "--bootstrap"], KIT),
+                )
+            config = json.loads((target / ".init-harness/config.json").read_text(encoding="utf-8"))
+            self.assertTrue(config["bootstrap"]["opt_in"])
+            self.assertIn("Bootstrap opcional:", output.getvalue())
+            self.assertIn("graphify-out/graph.json ausente", output.getvalue())
+
+    def test_memoria_indexa_contexto_e_handoff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "projeto"
+            target.mkdir()
+            git_init(target)
+            self.assertEqual(
+                0, init_harness.main(["install", "--target", str(target), "--graph", "manual", "--memory-mcp"], KIT)
+            )
+            config = json.loads((target / ".init-harness/config.json").read_text(encoding="utf-8"))
+            self.assertTrue(config["memoria"]["mcp"])
+            frente = target / "docs" / "ai" / "frentes" / "memoria.md"
+            frente.parent.mkdir(parents=True)
+            frente.write_text(
+                "---\nstatus: ativa\nbranch: master\ndono: teste\n"
+                "specs: specs/memoria/1-indice.md\n"
+                "depende_de: docs/ai/frentes/base.md\n"
+                "modulos: memoria\nfiles: app/memory/index.py\ntags: contexto\n---\n\n"
+                "# Memória\n\n## Próximo passo\n\nIndexar contexto de pagamentos.\n",
+                encoding="utf-8",
+            )
+            base = target / "docs" / "ai" / "frentes" / "base.md"
+            base.write_text("---\nstatus: concluida\nbranch: base\n---\n# Base\n", encoding="utf-8")
+            painel = target / "docs" / "ai" / "frentes" / "painel.md"
+            painel.write_text(
+                "---\nstatus: bloqueada\nbranch: painel\nfiles: app/users/gateway.py\n---\n# Painel\n",
+                encoding="utf-8",
+            )
+            (target / "docs" / "ai" / "DECISOES.md").write_text(
+                "# Decisões\n\n## D-0002 — Índice\n\n- **Frente / spec:** docs/ai/frentes/memoria.md\n",
+                encoding="utf-8",
+            )
+            spec = target / "specs" / "memoria" / "1-indice.md"
+            spec.parent.mkdir(parents=True)
+            spec.write_text(
+                "---\nstatus: rascunho\nfrente: docs/ai/frentes/memoria.md\nmodule: memoria\n"
+                "target_nodes:\n  - memory.index\nfiles:\n  - app/memory/index.py\n---\n# Índice\n",
+                encoding="utf-8",
+            )
+            graph_dir = target / "graphify-out"
+            graph_dir.mkdir()
+            (graph_dir / "graph.json").write_text(
+                json.dumps(
+                    {
+                        "nodes": [
+                            {
+                                "id": "memory.index",
+                                "label": "memory.index",
+                                "source_file": "app/memory/index.py",
+                                "community": 1,
+                            },
+                            {
+                                "id": "users.gateway",
+                                "label": "users.gateway",
+                                "source_file": "app/users/gateway.py",
+                                "community": 2,
+                            },
+                        ],
+                        "links": [{"source": "memory.index", "target": "users.gateway", "relation": "calls"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            source = target / "app" / "memory" / "index.py"
+            source.parent.mkdir(parents=True)
+            source.write_text("def index():\n    return True\n", encoding="utf-8")
+            script = target / ".claude" / "hooks" / "memory.py"
+            indexed = subprocess.run([sys.executable, str(script), "index"], cwd=target, capture_output=True, text=True)
+            self.assertEqual(0, indexed.returncode, indexed.stderr)
+            found = subprocess.run(
+                [sys.executable, str(script), "query", "pagamentos"], cwd=target, capture_output=True, text=True
+            )
+            self.assertEqual(0, found.returncode, found.stderr)
+            self.assertIn("docs/ai/frentes/memoria.md", found.stdout)
+            recovered = subprocess.run(
+                [sys.executable, str(script), "retrieve", "memory"], cwd=target, capture_output=True, text=True
+            )
+            self.assertEqual(0, recovered.returncode, recovered.stderr)
+            self.assertIn("Recuperação híbrida", recovered.stdout)
+            self.assertIn("memory.index", recovered.stdout)
+            graph_status = subprocess.run(
+                [sys.executable, str(script), "graph-status"], cwd=target, capture_output=True, text=True
+            )
+            self.assertEqual(0, graph_status.returncode, graph_status.stderr)
+            self.assertIn("Estado do Graphify: desconhecido", graph_status.stdout)
+            graph = subprocess.run([sys.executable, str(script), "graph"], cwd=target, capture_output=True, text=True)
+            self.assertEqual(0, graph.returncode, graph.stderr)
+            graph_data = json.loads(
+                (target / ".init-harness" / "memory" / "work-graph.json").read_text(encoding="utf-8")
+            )
+            self.assertTrue(any(node["kind"] == "frente" for node in graph_data["nodes"]))
+            self.assertIn(
+                {
+                    "from": "docs/ai/frentes/memoria.md",
+                    "to": "docs/ai/frentes/base.md",
+                    "kind": "depende_de",
+                    "origin": "explicita",
+                },
+                graph_data["edges"],
+            )
+            self.assertIn(
+                {
+                    "from": "specs/memoria/1-indice.md",
+                    "to": "arquivo:app/memory/index.py",
+                    "kind": "altera",
+                    "origin": "explicita",
+                },
+                graph_data["edges"],
+            )
+            ready = subprocess.run(
+                [sys.executable, str(script), "work", "--ready"], cwd=target, capture_output=True, text=True
+            )
+            self.assertEqual(0, ready.returncode, ready.stderr)
+            self.assertIn("docs/ai/frentes/memoria.md", ready.stdout)
+            critical = subprocess.run(
+                [sys.executable, str(script), "critical", "--branch", "master"],
+                cwd=target,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(0, critical.returncode, critical.stderr)
+            self.assertIn("Contexto crítico: docs/ai/frentes/memoria.md", critical.stdout)
+            self.assertIn("Specs: specs/memoria/1-indice.md", critical.stdout)
+            self.assertIn("Arquivos declarados: app/memory/index.py", critical.stdout)
+            self.assertIn("1 nó(s) correspondente(s)", critical.stdout)
+            bootstrap = subprocess.run(
+                [sys.executable, str(script), "bootstrap"], cwd=target, capture_output=True, text=True
+            )
+            self.assertEqual(0, bootstrap.returncode, bootstrap.stderr)
+            self.assertIn("Mapa inicial do projeto", bootstrap.stdout)
+            bootstrap_id = re.search(r"(B-[a-f0-9]+)", bootstrap.stdout)
+            self.assertIsNotNone(bootstrap_id)
+            accepted_bootstrap = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "bootstrap",
+                    "--accept",
+                    bootstrap_id.group(1),
+                    "--note",
+                    "Comunidade confirmada na arquitetura.",
+                ],
+                cwd=target,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(0, accepted_bootstrap.returncode, accepted_bootstrap.stderr)
+            feedback = target / "docs" / "ai" / "memoria" / "feedback-bootstrap.md"
+            self.assertIn("resultado: aceita", feedback.read_text(encoding="utf-8"))
+            bootstrap_history = subprocess.run(
+                [sys.executable, str(script), "bootstrap", "--history"], cwd=target, capture_output=True, text=True
+            )
+            self.assertEqual(0, bootstrap_history.returncode, bootstrap_history.stderr)
+            self.assertIn(f"{bootstrap_id.group(1)} [aceita]", bootstrap_history.stdout)
+            status = subprocess.run(
+                [sys.executable, str(script), "status", "--branch", "master"],
+                cwd=target,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(0, status.returncode, status.stderr)
+            self.assertIn("Painel operacional (somente leitura): branch master.", status.stdout)
+            self.assertIn("## Frente atual", status.stdout)
+            self.assertIn("## Atenção", status.stdout)
+            self.assertIn("## Impacto confirmado", status.stdout)
+            self.assertIn("## Revisão humana", status.stdout)
+            self.assertIn("Nenhuma sugestão ou proposta foi aplicada", status.stdout)
+            impact = subprocess.run(
+                [sys.executable, str(script), "impact", "--branch", "master"],
+                cwd=target,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(0, impact.returncode, impact.stderr)
+            self.assertIn("app/users/gateway.py", impact.stdout)
+            self.assertIn("Comunidades adicionais no grafo: 2", impact.stdout)
+            consolidation = subprocess.run(
+                [sys.executable, str(script), "consolidate", "--branch", "master"],
+                cwd=target,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(0, consolidation.returncode, consolidation.stderr)
+            self.assertIn("nenhum arquivo foi alterado automaticamente", consolidation.stdout)
+            self.assertIn("app/memory/index.py", consolidation.stdout)
+            consolidation_id = re.search(r"(C-[a-f0-9]+)", consolidation.stdout)
+            self.assertIsNotNone(consolidation_id)
+            accepted_consolidation = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "consolidate",
+                    "--branch",
+                    "master",
+                    "--accept",
+                    consolidation_id.group(1),
+                    "--note",
+                    "Escopo revisado e arquivos verificados.",
+                ],
+                cwd=target,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(0, accepted_consolidation.returncode, accepted_consolidation.stderr)
+            self.assertIn("## Consolidações", frente.read_text(encoding="utf-8"))
+            blocked = subprocess.run(
+                [sys.executable, str(script), "work", "--blocked"], cwd=target, capture_output=True, text=True
+            )
+            self.assertEqual(0, blocked.returncode, blocked.stderr)
+            self.assertIn("docs/ai/frentes/painel.md", blocked.stdout)
+            stale = subprocess.run(
+                [sys.executable, str(script), "work", "--stale"], cwd=target, capture_output=True, text=True
+            )
+            self.assertEqual(0, stale.returncode, stale.stderr)
+            self.assertIn("não está configurado", stale.stdout)
+            risks = subprocess.run(
+                [sys.executable, str(script), "work", "--risk"], cwd=target, capture_output=True, text=True
+            )
+            self.assertEqual(0, risks.returncode, risks.stderr)
+            self.assertIn("Grafo de código pode estar desatualizado", risks.stdout)
+            gaps = subprocess.run(
+                [sys.executable, str(script), "work", "--gaps"], cwd=target, capture_output=True, text=True
+            )
+            self.assertEqual(0, gaps.returncode, gaps.stderr)
+            self.assertIn("campos obrigatórios ausentes", gaps.stdout)
+            suggestions = subprocess.run(
+                [sys.executable, str(script), "suggest"], cwd=target, capture_output=True, text=True
+            )
+            self.assertEqual(0, suggestions.returncode, suggestions.stderr)
+            self.assertIn("--decisoes-> D-0002", suggestions.stdout)
+            relation_line = next(line for line in suggestions.stdout.splitlines() if "--relaciona_com->" in line)
+            suggestion_id = re.search(r"(S-[a-f0-9]+)", relation_line)
+            self.assertIsNotNone(suggestion_id)
+            accepted_suggestion = subprocess.run(
+                [sys.executable, str(script), "suggest", "--accept", suggestion_id.group(1)],
+                cwd=target,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(0, accepted_suggestion.returncode, accepted_suggestion.stderr)
+            self.assertIn("relaciona_com: docs/ai/frentes/painel.md", frente.read_text(encoding="utf-8"))
+            handoff = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "handoff",
+                    "--summary",
+                    "Índice pronto.",
+                    "--next-step",
+                    "Validar busca.",
+                ],
+                cwd=target,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(0, handoff.returncode, handoff.stderr)
+            handoffs = list((target / "docs" / "ai" / "memoria" / "handoffs").glob("*.md"))
+            self.assertEqual(1, len(handoffs))
+            briefing = subprocess.run(
+                [sys.executable, str(script), "briefing"], cwd=target, capture_output=True, text=True
+            )
+            self.assertEqual(0, briefing.returncode, briefing.stderr)
+            self.assertIn("Handoff aberto", briefing.stdout)
+            accepted = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "handoff",
+                    "--accept",
+                    handoffs[0].relative_to(target).as_posix(),
+                    "--owner",
+                    "agente-b",
+                ],
+                cwd=target,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(0, accepted.returncode, accepted.stderr)
+            self.assertIn("status: aceito", handoffs[0].read_text(encoding="utf-8"))
+            briefing_after_accept = subprocess.run(
+                [sys.executable, str(script), "briefing"], cwd=target, capture_output=True, text=True
+            )
+            self.assertEqual(0, briefing_after_accept.returncode, briefing_after_accept.stderr)
+            self.assertNotIn("Handoff aberto", briefing_after_accept.stdout)
+            claimed_again = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "handoff",
+                    "--accept",
+                    handoffs[0].relative_to(target).as_posix(),
+                    "--owner",
+                    "agente-c",
+                ],
+                cwd=target,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(1, claimed_again.returncode)
+
+            mcp = target / ".claude" / "hooks" / "memory_mcp.py"
+            mcp_result = subprocess.run(
+                [sys.executable, str(mcp)],
+                cwd=target,
+                input='{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n',
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(0, mcp_result.returncode, mcp_result.stderr)
+            self.assertIn("harness_memory_query", mcp_result.stdout)
+            self.assertIn("harness_memory_retrieve", mcp_result.stdout)
+            self.assertIn("harness_graph_status", mcp_result.stdout)
+            self.assertIn("harness_work_status", mcp_result.stdout)
+            self.assertIn("harness_project_bootstrap_feedback", mcp_result.stdout)
 
     def test_dry_run_nao_escreve(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

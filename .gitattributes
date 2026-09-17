@@ -1,1 +1,5 @@
 * text=auto eol=lf
+
+# Saídas e caches gerados não devem afetar métricas de linguagem no GitHub.
+graphify-out/** linguist-generated=true
+.init-harness/memory/** linguist-generated=true

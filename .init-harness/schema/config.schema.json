@@ -10,13 +10,15 @@
     "instalado_em",
     "providers",
     "grafo",
+    "memoria",
+    "bootstrap",
     "frente_inativa_horas",
     "autonomia",
     "ambientes"
   ],
   "properties": {
     "$schema": {"type": "string"},
-    "harness_version": {"const": "2.1.0"},
+    "harness_version": {"const": "2.3.0"},
     "modo": {"enum": ["proprio", "cliente"]},
     "instalado_em": {"type": "string", "format": "date"},
     "providers": {
@@ -26,6 +28,18 @@
       "items": {"enum": ["claude", "codex"]}
     },
     "grafo": {"enum": ["graphify", "manual"]},
+    "memoria": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mcp"],
+      "properties": {"mcp": {"type": "boolean"}}
+    },
+    "bootstrap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["opt_in"],
+      "properties": {"opt_in": {"type": "boolean"}}
+    },
     "frente_inativa_horas": {
       "oneOf": [
         {"type": "null"},

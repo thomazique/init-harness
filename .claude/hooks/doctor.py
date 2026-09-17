@@ -53,6 +53,9 @@ def main() -> int:
         }
         if not isinstance(autonomia, dict) or set(autonomia) != chaves_autonomia:
             erros.append("bloco autonomia ausente ou incompleto")
+        memoria = h.get("memoria")
+        if not isinstance(memoria, dict) or not isinstance(memoria.get("mcp"), bool):
+            erros.append("bloco memoria.mcp ausente ou inválido")
 
     nucleo = raiz / "INIT-HARNESS.md"
     if not nucleo.exists():
@@ -80,6 +83,8 @@ def main() -> int:
         ".claude/hooks/session_start.py",
         ".claude/hooks/guard_bash.py",
         ".claude/hooks/guard_files.py",
+        ".claude/hooks/memory.py",
+        ".claude/hooks/memory_mcp.py",
         ".claude/hooks/pre_compact.py",
         ".claude/hooks/stop_check.py",
         ".claude/hooks/doctor.py",

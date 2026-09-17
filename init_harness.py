@@ -14,7 +14,7 @@ from typing import Any
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-VERSION = "2.1.0"
+VERSION = "2.3.0"
 
 MANAGED_FILES = (
     "INIT-HARNESS.md",
@@ -23,6 +23,8 @@ MANAGED_FILES = (
     ".claude/hooks/doctor.py",
     ".claude/hooks/guard_bash.py",
     ".claude/hooks/guard_files.py",
+    ".claude/hooks/memory.py",
+    ".claude/hooks/memory_mcp.py",
     ".claude/hooks/pre_compact.py",
     ".claude/hooks/session_start.py",
     ".claude/hooks/stop_check.py",
@@ -153,12 +155,16 @@ def create_project_files(source: Path, target: Path, providers: list[str], repor
             shutil.copy2(source / template, dst)
 
 
-def config_data(source: Path, mode: str, providers: list[str], graph: str) -> dict[str, Any]:
+def config_data(
+    source: Path, mode: str, providers: list[str], graph: str, memory_mcp: bool, bootstrap: bool
+) -> dict[str, Any]:
     data = load_json(source / ".claude/skills/init-harness/templates/config.template.json")
     data["instalado_em"] = date.today().isoformat()
     data["modo"] = mode
     data["providers"] = providers
     data["grafo"] = graph
+    data["memoria"]["mcp"] = memory_mcp
+    data["bootstrap"]["opt_in"] = bootstrap
     return data
 
 
@@ -168,6 +174,8 @@ def install_config(
     mode: str,
     providers: list[str],
     graph: str,
+    memory_mcp: bool,
+    bootstrap: bool,
     reporter: Reporter,
 ) -> dict[str, Any]:
     destination = target / ".init-harness/config.json"
@@ -177,13 +185,18 @@ def install_config(
         data["harness_version"] = VERSION
         data["$schema"] = "./schema/config.schema.json"
         data.setdefault("providers", providers)
-        data.setdefault("autonomia", config_data(source, mode, providers, graph)["autonomia"])
+        defaults = config_data(source, mode, providers, graph, memory_mcp, bootstrap)
+        data.setdefault("autonomia", defaults["autonomia"])
+        data.setdefault("memoria", defaults["memoria"])
+        data.setdefault("bootstrap", defaults["bootstrap"])
+        if bootstrap:
+            data["bootstrap"]["opt_in"] = True
         if json.dumps(data, sort_keys=True) != original:
             reporter.change("atualizar metadados de .init-harness/config.json")
             if not reporter.dry_run:
                 write_json(destination, data)
     else:
-        data = config_data(source, mode, providers, graph)
+        data = config_data(source, mode, providers, graph, memory_mcp, bootstrap)
         reporter.change("criar .init-harness/config.json")
         if not reporter.dry_run:
             write_json(destination, data)
@@ -303,6 +316,28 @@ def configure_git(target: Path, mode: str, init_git: bool, force_hooks: bool, re
             )
 
 
+def run_optional_bootstrap(target: Path, reporter: Reporter) -> None:
+    """Executa apenas a leitura do mapa inicial já existente; não dispara Graphify automaticamente."""
+    script = target / ".claude" / "hooks" / "memory.py"
+    reporter.change("executar bootstrap revisável do mapa inicial")
+    if reporter.dry_run:
+        return
+    result = subprocess.run(
+        [sys.executable, str(script), "bootstrap"],
+        cwd=target,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if result.returncode:
+        reporter.warn("bootstrap opcional não pôde ser executado: " + result.stderr.strip())
+        return
+    print("Bootstrap opcional:")
+    print(result.stdout.strip())
+
+
 def run_install(args: argparse.Namespace, source: Path) -> int:
     target = args.target.resolve()
     if not target.is_dir():
@@ -313,9 +348,15 @@ def run_install(args: argparse.Namespace, source: Path) -> int:
     copy_managed(source, target, reporter)
     create_project_files(source, target, providers, reporter)
     install_settings(source, target, providers, reporter)
-    install_config(source, target, args.mode, providers, args.graph, reporter)
-    append_lines(target / ".gitignore", ["graphify-out/cache/", ".init-harness/state/"], reporter)
+    install_config(source, target, args.mode, providers, args.graph, args.memory_mcp, args.bootstrap, reporter)
+    append_lines(
+        target / ".gitignore", ["graphify-out/cache/", ".init-harness/state/", ".init-harness/memory/"], reporter
+    )
     configure_git(target, args.mode, args.init_git, args.force_hooks, reporter)
+    if args.memory_mcp:
+        reporter.preserve("MCP de memória opt-in: registre `python .claude/hooks/memory_mcp.py` no cliente desejado")
+    if args.bootstrap:
+        run_optional_bootstrap(target, reporter)
     print(
         f"Resultado: {len(reporter.changed)} mudança(s), "
         f"{len(reporter.preserved)} arquivo(s) preservado(s), {len(reporter.warnings)} aviso(s)."
@@ -331,6 +372,8 @@ def run_upgrade(args: argparse.Namespace, source: Path) -> int:
     args.mode = data.get("modo", "proprio")
     args.providers = data.get("providers", ["claude", "codex"])
     args.graph = data.get("grafo", "graphify")
+    args.memory_mcp = bool((data.get("memoria") or {}).get("mcp", False))
+    args.bootstrap = bool((data.get("bootstrap") or {}).get("opt_in", False))
     args.init_git = False
     return run_install(args, source)
 
@@ -353,6 +396,12 @@ def parser() -> argparse.ArgumentParser:
     install.add_argument("--mode", choices=("proprio", "cliente"), default="proprio")
     install.add_argument("--providers", nargs="+", choices=("claude", "codex"), default=["claude", "codex"])
     install.add_argument("--graph", choices=("graphify", "manual"), default="graphify")
+    install.add_argument("--memory-mcp", action="store_true", help="Marca a integração MCP de memória como opt-in.")
+    install.add_argument(
+        "--bootstrap",
+        action="store_true",
+        help="Executa o mapa inicial revisável se houver Graphify; nunca extrai ou cria estrutura automaticamente.",
+    )
     install.add_argument("--init-git", action="store_true")
     install.add_argument("--force-hooks", action="store_true")
     install.add_argument("--dry-run", action="store_true")

@@ -17,6 +17,7 @@ from pathlib import Path
 sys.dont_write_bytecode = True  # não gerar __pycache__ no projeto
 
 import _lib as L  # noqa: E402
+import memory as M  # noqa: E402
 
 
 def horas_desde(valor: str) -> float | None:
@@ -126,6 +127,13 @@ def main() -> None:
     n = debitos_abertos(r)
     if n is not None:
         linhas.append(f"Débitos abertos em docs/ai/DEBITOS.md: {n}.")
+
+    try:
+        linhas.extend(M.briefing(r, branch))
+    except Exception as exc:
+        linhas.append(
+            f"Memória local indisponível ({exc.__class__.__name__}); os documentos canônicos continuam no disco."
+        )
 
     saude = []
     hooks_path = L.git(["config", "--get", "core.hooksPath"], r)

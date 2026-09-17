@@ -4,6 +4,9 @@ Inicializa repositórios Git para trabalho contínuo com agentes de IA. O kit
 combina contexto persistente, frentes e specs, validação, segurança operacional
 e adaptadores para Claude Code e Codex.
 
+> Estado: projeto em evolução. O harness ajuda a estruturar trabalho com IA,
+> mas não substitui revisão humana, sandbox, CI, backups ou controles de acesso.
+
 ## Requisitos
 
 - Git
@@ -31,6 +34,22 @@ Visualizar as mudanças sem escrever:
 python init_harness.py install --target C:\projeto --dry-run
 ```
 
+Memória MCP é opcional e não altera a configuração do cliente automaticamente:
+
+```powershell
+python init_harness.py install --target C:\projeto --memory-mcp
+# No cliente MCP escolhido, registre: python .claude/hooks/memory_mcp.py
+```
+
+Em um projeto novo que já tenha `graphify-out/graph.json`, o mapa inicial é opt-in e revisável:
+
+```powershell
+python init_harness.py install --target C:\projeto --bootstrap
+# Se o grafo ainda não existir, o bootstrap apenas informa o próximo passo.
+python .claude/hooks/memory.py bootstrap
+python .claude/hooks/memory.py bootstrap --accept B-... --note "Área confirmada na arquitetura."
+```
+
 ## Atualização
 
 Atualize primeiro esta cópia com `git pull` e depois execute:
@@ -52,7 +71,8 @@ e recebem somente migrações de referências conhecidas.
 - `.init-harness/schema/`: contrato da configuração.
 - `.claude/`: adaptador, hooks, agentes e skills do Claude Code.
 - `AGENTS.md`: adaptador do Codex gerado no projeto.
-- `docs/ai/` e `specs/`: memória operacional do projeto.
+- `docs/ai/` e `specs/`: memória operacional do projeto, pesquisável localmente por SQLite FTS5 reconstruível.
+- `docs/ai/memoria/handoffs/`: transições explícitas e versionáveis entre sessões/agentes.
 - `.githooks/`: enforcement independente do agente.
 - `tests/guardrails/`: testes copiados para cada instalação em modo próprio.
 
@@ -60,6 +80,18 @@ e recebem somente migrações de referências conhecidas.
 
 Os hooks reduzem risco, mas não substituem sandbox, proteção de branch,
 isolamento de credenciais e revisão humana para produção ou ações destrutivas.
+
+Leia [SECURITY.md](SECURITY.md) antes de habilitar MCP, Graphify ou qualquer
+integração externa. O projeto não coleta telemetria própria; veja
+[PRIVACY.md](PRIVACY.md) para dados locais e integrações opt-in.
+
+## Projeto público
+
+- [Contribuir](CONTRIBUTING.md): ambiente, verificações e regras de mudança.
+- [Suporte](SUPPORT.md): dúvidas, bugs e limites de suporte.
+- [Código de conduta](CODE_OF_CONDUCT.md): convivência nos espaços oficiais.
+- [Roadmap](docs/ROADMAP.md): direção atual e frentes futuras sob validação.
+- [Licença MIT](LICENSE): uso, modificação e distribuição.
 
 ## Desenvolvimento
 

@@ -2,6 +2,37 @@
 
 Todas as mudanças relevantes do init-harness são registradas neste arquivo.
 
+## [Unreleased]
+
+### Adicionado
+
+- Documentação pública de licença, segurança, privacidade, contribuição, suporte e conduta.
+- Templates de issue e pull request para relatos reproduzíveis e revisão de segurança.
+- Roadmap com avaliação em projetos reais e sincronização de equipes explicitamente registradas para o futuro.
+
+## [2.3.0] - 2026-09-17
+
+### Adicionado
+
+- Painel operacional `memory.py status`, somente leitura, para contexto, diagnóstico, impacto e itens de revisão.
+- Mapa inicial opt-in por comunidades do Graphify, com feedback local versionável em Markdown.
+- Opção `init_harness.py install --bootstrap`, que prepara e executa apenas a leitura do mapa existente; não executa Graphify nem cria estrutura automaticamente.
+
+## [2.2.0] - 2026-09-16
+
+### Adicionado
+
+- Memória local: documentos Markdown canônicos indexados por SQLite FTS5 reconstruível.
+- Briefing de recuperação de contexto no `SessionStart` e comando portátil `memory.py query`.
+- Handoffs explícitos, versionáveis e pesquisáveis em `docs/ai/memoria/handoffs/`.
+- Aceite único de handoff, com estado tipado no índice local e registro auditável no Markdown.
+- Servidor MCP stdio opcional e sem dependências para briefing, busca e handoffs.
+
+### Segurança
+
+- A memória não captura prompts, comandos ou tool calls; handoffs rejeitam padrões fortes de segredo.
+- Conteúdo recuperado é apresentado como evidência histórica, nunca como instrução executável.
+
 ## [2.1.0] - 2026-09-14
 
 ### Adicionado
