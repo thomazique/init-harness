@@ -20,6 +20,19 @@ if hasattr(sys.stdout, "reconfigure"):
 import _lib as L  # noqa: E402
 
 
+def _duplicate_ids(path: Path, pattern: str, first_column_only: bool = False) -> dict[str, list[int]]:
+    """Encontra identificadores duplicados sem interpretar o restante do Markdown."""
+    if not path.is_file():
+        return {}
+    matches: dict[str, list[int]] = {}
+    for line_number, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1):
+        subject = line.split("|", 2)[1] if first_column_only and line.lstrip().startswith("|") and "|" in line else line
+        found = re.search(pattern, subject)
+        if found:
+            matches.setdefault(found.group(1), []).append(line_number)
+    return {identifier: lines for identifier, lines in matches.items() if len(lines) > 1}
+
+
 def main() -> int:
     raiz = Path(__file__).resolve().parents[2]
     erros: list[str] = []
@@ -140,6 +153,14 @@ def main() -> int:
         else:
             ok.append("pre-commit configurado em .githooks")
 
+    if not shutil.which("uv"):
+        avisos.append(
+            "uv não está no PATH; instale-o e exponha seu diretório de binários ao cliente de IA e ao Git "
+            "(Linux/macOS: ~/.local/bin ou ~/.cargo/bin; Windows: %USERPROFILE%\\.local\\bin)."
+        )
+    else:
+        ok.append("uv disponível no PATH")
+
     if h.get("grafo") == "graphify":
         if shutil.which("graphify"):
             resultado = subprocess.run(
@@ -170,10 +191,22 @@ def main() -> int:
     for arq, fm in L.frentes(raiz):
         if fm.get("status") == "concluida":
             continue
-        por_branch.setdefault(fm.get("branch", "?"), []).append(arq.name)
+        branch = str(fm.get("branch", "")).strip()
+        if branch and branch not in {"-", "?"}:
+            por_branch.setdefault(branch, []).append(arq.name)
     for branch, nomes in por_branch.items():
         if len(nomes) > 1:
             erros.append(f"branch {branch} tem múltiplas frentes não concluídas: {', '.join(nomes)}")
+
+    duplicate_sources = (
+        (raiz / "docs/ai/DECISOES.md", r"^##\s+(D-\d+)\b", False),
+        (raiz / "docs/ai/DEBITOS.md", r"\b(DB-\d+)\b", True),
+    )
+    for path, pattern, first_column_only in duplicate_sources:
+        for identifier, lines in _duplicate_ids(path, pattern, first_column_only).items():
+            erros.append(
+                f"ID duplicado {identifier} em {path.relative_to(raiz).as_posix()}: linhas {', '.join(map(str, lines))}"
+            )
 
     for mensagem in ok:
         print(f"[OK] {mensagem}")

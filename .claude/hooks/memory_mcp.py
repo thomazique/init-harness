@@ -13,6 +13,9 @@ from typing import Any
 import _lib as L
 import memory
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 TOOLS = [
     {
         "name": "harness_memory_briefing",
@@ -121,6 +124,15 @@ TOOLS = [
         },
     },
     {
+        "name": "harness_work_suggestion_reject",
+        "description": "Rejeita uma sugestão com critério factual e a retira da fila de revisão.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"id": {"type": "string"}, "note": {"type": "string"}},
+            "required": ["id", "note"],
+        },
+    },
+    {
         "name": "harness_handoff_list",
         "description": "Lista handoffs da branch atual sem aceitá-los.",
         "inputSchema": {"type": "object", "properties": {"branch": {"type": "string"}}},
@@ -204,6 +216,9 @@ def _call(root: Path, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     if name == "harness_work_suggestion_accept":
         suggestion = memory.accept_relationship_suggestion(root, str(arguments["id"]))
         return _text(f"Sugestão aceita: {suggestion['id']}")
+    if name == "harness_work_suggestion_reject":
+        suggestion = memory.reject_relationship_suggestion(root, str(arguments["id"]), str(arguments["note"]))
+        return _text(f"Sugestão rejeitada: {suggestion['id']}")
     if name == "harness_handoff_list":
         rows = memory.list_handoffs(root, branch)
         text = (

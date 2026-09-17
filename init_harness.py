@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
-import shutil
 import subprocess
 import sys
 from datetime import date
@@ -14,7 +14,7 @@ from typing import Any
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-VERSION = "2.3.0"
+VERSION = "2.3.1"
 
 MANAGED_FILES = (
     "INIT-HARNESS.md",
@@ -94,6 +94,20 @@ def write_json(path: Path, data: dict[str, Any]) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def _managed_baseline(target: Path, relative: str) -> Path:
+    return target / ".init-harness" / "managed-baselines" / relative
+
+
+def _managed_candidate(target: Path, relative: str) -> Path:
+    return target / ".init-harness" / "updates" / (relative + ".new")
+
+
+def _write_managed_baseline(target: Path, relative: str, content: bytes) -> None:
+    baseline = _managed_baseline(target, relative)
+    baseline.parent.mkdir(parents=True, exist_ok=True)
+    baseline.write_bytes(content)
+
+
 def copy_managed(source: Path, target: Path, reporter: Reporter) -> None:
     files = list(MANAGED_FILES)
     for tree in MANAGED_TREES:
@@ -104,12 +118,32 @@ def copy_managed(source: Path, target: Path, reporter: Reporter) -> None:
         dst = target / relative
         if not src.is_file():
             raise FileNotFoundError(f"arquivo gerenciado ausente no kit: {relative}")
-        if dst.exists() and dst.read_bytes() == src.read_bytes():
+        new_content = src.read_bytes()
+        baseline = _managed_baseline(target, relative)
+        old_content = baseline.read_bytes() if baseline.is_file() else None
+        local_content = dst.read_bytes() if dst.is_file() else None
+        if local_content == new_content:
+            if not reporter.dry_run and old_content != new_content:
+                _write_managed_baseline(target, relative, new_content)
             continue
-        reporter.change(f"sincronizar {relative}")
+        # Uma cópia anterior do kit sem alteração local pode evoluir normalmente.
+        if local_content is None or (old_content is not None and local_content == old_content):
+            reporter.change(f"atualizar {relative}")
+            if not reporter.dry_run:
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                dst.write_bytes(new_content)
+                _write_managed_baseline(target, relative, new_content)
+            continue
+        # Sem baseline (instalações antigas) ou com edição local, a única opção
+        # segura é preservar o contexto do projeto e oferecer a nova versão.
+        candidate = _managed_candidate(target, relative)
+        reporter.preserve(relative)
+        reporter.warn(f"atualização de {relative} disponível em {candidate.relative_to(target).as_posix()}")
         if not reporter.dry_run:
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
+            candidate.parent.mkdir(parents=True, exist_ok=True)
+            candidate.write_bytes(new_content)
+            if old_content is None:
+                _write_managed_baseline(target, relative, local_content)
 
 
 def merge_settings(current: Any, required: Any) -> Any:
@@ -121,10 +155,41 @@ def merge_settings(current: Any, required: Any) -> Any:
     if isinstance(current, list) and isinstance(required, list):
         merged = list(current)
         for value in required:
-            if value not in merged:
+            if not any(_settings_item_matches(existing, value) for existing in merged):
                 merged.append(value)
         return merged
     return current
+
+
+def _settings_item_matches(current: Any, required: Any) -> bool:
+    """Reconhece um hook pelo evento, matcher e script, não pelo comando inteiro.
+
+    Um projeto pode precisar prefixar PATH ou usar outro lançador. Nessa situação,
+    a entrada local equivalente deve prevalecer durante o upgrade.
+    """
+    if not isinstance(current, dict) or not isinstance(required, dict):
+        return current == required
+    current_hooks, required_hooks = current.get("hooks"), required.get("hooks")
+    if not isinstance(current_hooks, list) or not isinstance(required_hooks, list):
+        return current == required
+
+    def scripts(hooks: list[Any]) -> tuple[str, ...]:
+        values = []
+        for hook in hooks:
+            if not isinstance(hook, dict):
+                return ()
+            args = hook.get("args")
+            if not isinstance(args, list) or not args or not isinstance(args[-1], str):
+                return ()
+            values.append(args[-1])
+        return tuple(values)
+
+    current_scripts, required_scripts = scripts(current_hooks), scripts(required_hooks)
+    return (
+        bool(current_scripts)
+        and current.get("matcher", "") == required.get("matcher", "")
+        and current_scripts == required_scripts
+    )
 
 
 def install_settings(source: Path, target: Path, providers: list[str], reporter: Reporter) -> None:
@@ -152,7 +217,10 @@ def create_project_files(source: Path, target: Path, providers: list[str], repor
         reporter.change(f"criar {destination}")
         if not reporter.dry_run:
             dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source / template, dst)
+            content = (source / template).read_text(encoding="utf-8")
+            if destination == "AGENTS.md":
+                content = content.replace("<!-- <CAMINHO-ABSOLUTO-DO-PROJETO>/AGENTS.md -->\n\n", "")
+            dst.write_text(content, encoding="utf-8")
 
 
 def config_data(
@@ -236,6 +304,7 @@ def migrate_legacy(target: Path, reporter: Reporter) -> None:
             ".claude/skills/init-harness/templates/config.template.json",
         ),
     )
+    migrated = False
     for old, new in moves:
         src = target / old
         dst = target / new
@@ -248,7 +317,11 @@ def migrate_legacy(target: Path, reporter: Reporter) -> None:
         if not reporter.dry_run:
             dst.parent.mkdir(parents=True, exist_ok=True)
             src.replace(dst)
-    replace_legacy_references(target, reporter)
+        migrated = True
+    # Referências só são trocadas no momento de uma migração material. Rodar esta
+    # substituição em todo upgrade destrói registros históricos deliberados.
+    if migrated:
+        replace_legacy_references(target, reporter)
 
 
 def append_lines(path: Path, lines: list[str], reporter: Reporter) -> None:
@@ -277,7 +350,21 @@ def git_output(target: Path, *args: str) -> str:
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
-def configure_git(target: Path, mode: str, init_git: bool, force_hooks: bool, reporter: Reporter) -> None:
+def client_method_paths(source: Path) -> list[str]:
+    """Carrega a política única de exclusão usada também pelo pre-commit."""
+    lib_path = source / ".claude" / "hooks" / "_lib.py"
+    spec = importlib.util.spec_from_file_location("init_harness_client_policy", lib_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("não foi possível carregar a política de modo cliente")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    paths = getattr(module, "METODO_CLIENTE", ())
+    if not isinstance(paths, tuple) or not all(isinstance(path, str) for path in paths):
+        raise RuntimeError("METODO_CLIENTE inválido")
+    return list(paths)
+
+
+def configure_git(source: Path, target: Path, mode: str, init_git: bool, force_hooks: bool, reporter: Reporter) -> None:
     if not git_output(target, "rev-parse", "--is-inside-work-tree"):
         if not init_git:
             reporter.warn("destino não é repositório Git; use --init-git para inicializá-lo")
@@ -304,14 +391,7 @@ def configure_git(target: Path, mode: str, init_git: bool, force_hooks: bool, re
             exclude = (base if base.is_absolute() else target / base) / "info" / "exclude"
             append_lines(
                 exclude,
-                [
-                    "INIT-HARNESS.md",
-                    ".claude/skills/init-harness/",
-                    ".claude/skills/spec/",
-                    ".claude/skills/pilares/",
-                    ".claude/skills/commit/",
-                    "tests/guardrails/",
-                ],
+                client_method_paths(source),
                 reporter,
             )
 
@@ -350,9 +430,17 @@ def run_install(args: argparse.Namespace, source: Path) -> int:
     install_settings(source, target, providers, reporter)
     install_config(source, target, args.mode, providers, args.graph, args.memory_mcp, args.bootstrap, reporter)
     append_lines(
-        target / ".gitignore", ["graphify-out/cache/", ".init-harness/state/", ".init-harness/memory/"], reporter
+        target / ".gitignore",
+        [
+            "graphify-out/cache/",
+            ".init-harness/state/",
+            ".init-harness/memory/",
+            ".init-harness/managed-baselines/",
+            ".init-harness/updates/",
+        ],
+        reporter,
     )
-    configure_git(target, args.mode, args.init_git, args.force_hooks, reporter)
+    configure_git(source, target, args.mode, args.init_git, args.force_hooks, reporter)
     if args.memory_mcp:
         reporter.preserve("MCP de memória opt-in: registre `python .claude/hooks/memory_mcp.py` no cliente desejado")
     if args.bootstrap:

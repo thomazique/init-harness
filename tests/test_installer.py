@@ -15,10 +15,22 @@ from pathlib import Path
 import init_harness
 
 KIT = Path(__file__).resolve().parents[1]
+ORIGINAL_SUBPROCESS_RUN = subprocess.run
+
+
+def run_process(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+    """Decodifica a saída UTF-8 emitida pelos hooks, mesmo no console cp1252."""
+    if kwargs.get("text"):
+        kwargs.setdefault("encoding", "utf-8")
+        kwargs.setdefault("errors", "replace")
+    return ORIGINAL_SUBPROCESS_RUN(*args, **kwargs)  # type: ignore[arg-type,return-value]
+
+
+subprocess.run = run_process  # type: ignore[assignment]
 
 
 def git_init(path: Path) -> None:
-    subprocess.run(["git", "init", str(path)], check=True, capture_output=True)
+    run_process(["git", "init", str(path)], check=True, capture_output=True)
 
 
 class InstallerTest(unittest.TestCase):
@@ -48,7 +60,7 @@ class InstallerTest(unittest.TestCase):
             self.assertTrue((target / "AGENTS.md").is_file())
             self.assertTrue((target / "INIT-HARNESS.md").is_file())
             config = json.loads((target / ".init-harness/config.json").read_text(encoding="utf-8"))
-            self.assertEqual("2.3.0", config["harness_version"])
+            self.assertEqual("2.3.1", config["harness_version"])
             self.assertFalse(config["memoria"]["mcp"])
             self.assertFalse(config["bootstrap"]["opt_in"])
             self.assertEqual("continuar", config["autonomia"]["tarefas_seguras"])
@@ -94,11 +106,57 @@ class InstallerTest(unittest.TestCase):
             self.assertFalse((target / ".claude/harness.json").exists())
             self.assertTrue((target / "INIT-HARNESS.md").is_file())
             config = json.loads((target / ".init-harness/config.json").read_text(encoding="utf-8"))
-            self.assertEqual("2.3.0", config["harness_version"])
+            self.assertEqual("2.3.1", config["harness_version"])
             self.assertEqual(["claude", "codex"], config["providers"])
             claude = (target / "CLAUDE.md").read_text(encoding="utf-8")
             self.assertIn("INIT-HARNESS.md", claude)
             self.assertIn(".init-harness/config.json", claude)
+
+    def test_upgrade_nao_reescreve_referencia_historica_sem_migracao(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "projeto"
+            target.mkdir()
+            git_init(target)
+            self.assertEqual(0, init_harness.main(["install", "--target", str(target), "--graph", "manual"], KIT))
+            decision = target / "docs" / "ai" / "DECISOES.md"
+            historical = "A migração foi de .claude/harness.json para .init-harness/config.json.\n"
+            decision.write_text(historical, encoding="utf-8")
+            self.assertEqual(0, init_harness.main(["upgrade", "--target", str(target)], KIT))
+            self.assertEqual(historical, decision.read_text(encoding="utf-8"))
+
+    def test_merge_settings_preserva_hook_customizado_equivalente(self) -> None:
+        required = {
+            "hooks": [
+                {
+                    "matcher": "Bash",
+                    "hooks": [{"type": "command", "command": "uv", "args": ["run", "guard.py"]}],
+                }
+            ]
+        }
+        current = {
+            "hooks": [
+                {
+                    "matcher": "Bash",
+                    "hooks": [{"type": "command", "command": "env UV=/opt/uv uv", "args": ["run", "guard.py"]}],
+                }
+            ]
+        }
+        merged = init_harness.merge_settings(current, required)
+        self.assertEqual(1, len(merged["hooks"]))
+        self.assertEqual("env UV=/opt/uv uv", merged["hooks"][0]["hooks"][0]["command"])
+
+    def test_modo_cliente_deriva_exclusoes_da_politica_central(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "cliente"
+            target.mkdir()
+            git_init(target)
+            self.assertEqual(
+                0,
+                init_harness.main(["install", "--target", str(target), "--mode", "cliente", "--graph", "manual"], KIT),
+            )
+            exclude = (target / ".git" / "info" / "exclude").read_text(encoding="utf-8")
+            policy = init_harness.client_method_paths(KIT)
+            self.assertTrue(all(path in exclude.splitlines() for path in policy))
 
     def test_bootstrap_e_opt_in_e_nao_executa_graphify(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -241,7 +299,10 @@ class InstallerTest(unittest.TestCase):
             self.assertIn("Arquivos declarados: app/memory/index.py", critical.stdout)
             self.assertIn("1 nó(s) correspondente(s)", critical.stdout)
             bootstrap = subprocess.run(
-                [sys.executable, str(script), "bootstrap"], cwd=target, capture_output=True, text=True
+                [sys.executable, str(script), "bootstrap", "--min-files", "1"],
+                cwd=target,
+                capture_output=True,
+                text=True,
             )
             self.assertEqual(0, bootstrap.returncode, bootstrap.stderr)
             self.assertIn("Mapa inicial do projeto", bootstrap.stdout)
@@ -254,6 +315,8 @@ class InstallerTest(unittest.TestCase):
                     "bootstrap",
                     "--accept",
                     bootstrap_id.group(1),
+                    "--min-files",
+                    "1",
                     "--note",
                     "Comunidade confirmada na arquitetura.",
                 ],
@@ -265,7 +328,10 @@ class InstallerTest(unittest.TestCase):
             feedback = target / "docs" / "ai" / "memoria" / "feedback-bootstrap.md"
             self.assertIn("resultado: aceita", feedback.read_text(encoding="utf-8"))
             bootstrap_history = subprocess.run(
-                [sys.executable, str(script), "bootstrap", "--history"], cwd=target, capture_output=True, text=True
+                [sys.executable, str(script), "bootstrap", "--history", "--min-files", "1"],
+                cwd=target,
+                capture_output=True,
+                text=True,
             )
             self.assertEqual(0, bootstrap_history.returncode, bootstrap_history.stderr)
             self.assertIn(f"{bootstrap_id.group(1)} [aceita]", bootstrap_history.stdout)

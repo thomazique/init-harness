@@ -10,6 +10,18 @@ Todas as mudanças relevantes do init-harness são registradas neste arquivo.
 - Templates de issue e pull request para relatos reproduzíveis e revisão de segurança.
 - Roadmap com avaliação em projetos reais e sincronização de equipes explicitamente registradas para o futuro.
 
+## [2.3.1] - 2026-09-17
+
+### Corrigido
+
+- Upgrade preserva conteúdo local de arquivos gerenciados e oferece a versão nova para revisão, sem sobrescrita silenciosa.
+- Diagnósticos de branch, IDs duplicados, UTF-8 no Windows, sugestões de relação e modo cliente.
+- Bootstrap filtra comunidades pequenas e de documentação por padrão; o limite é configurável.
+
+### Alterado
+
+- `doctor` orienta a correção de `uv` ausente do PATH sem assumir caminhos específicos da máquina.
+
 ## [2.3.0] - 2026-09-17
 
 ### Adicionado

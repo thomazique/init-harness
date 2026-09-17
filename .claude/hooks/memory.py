@@ -21,7 +21,11 @@ INDEX_RELATIVE = Path(".init-harness") / "memory" / "index.sqlite"
 WORK_GRAPH_RELATIVE = Path(".init-harness") / "memory" / "work-graph.json"
 HANDOFFS_RELATIVE = Path("docs") / "ai" / "memoria" / "handoffs"
 BOOTSTRAP_FEEDBACK_RELATIVE = Path("docs") / "ai" / "memoria" / "feedback-bootstrap.md"
+RELATIONSHIP_FEEDBACK_RELATIVE = Path("docs") / "ai" / "memoria" / "feedback-sugestoes.md"
 MAX_HANDOFF_FIELD = 2_000
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 
 def _markdown_files(root: Path) -> list[Path]:
@@ -824,7 +828,7 @@ def _bootstrap_feedback(root: Path) -> dict[str, str]:
     return outcomes
 
 
-def bootstrap_proposals(root: Path) -> list[dict[str, str]]:
+def bootstrap_proposals(root: Path, min_files: int = 3, include_docs: bool = False) -> list[dict[str, str]]:
     """Propõe um mapa inicial a partir de comunidades já extraídas pelo Graphify."""
     graph_path = root / "graphify-out" / "graph.json"
     if not graph_path.is_file():
@@ -850,25 +854,29 @@ def bootstrap_proposals(root: Path) -> list[dict[str, str]]:
     proposals: list[dict[str, str]] = []
     for community, group in groups.items():
         files = sorted(group["files"]) if isinstance(group["files"], set) else []
-        if not files:
+        code_files = [path for path in files if not path.startswith(("docs/", ".claude/", ".github/"))]
+        selected = files if include_docs else code_files
+        if len(selected) < max(1, min_files):
             continue
         title = str(group["name"])
-        raw = "\0".join(("comunidade_graphify", community, *files))
+        raw = "\0".join(("comunidade_graphify", community, *selected))
         proposals.append(
             {
                 "id": "B-" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:10],
                 "kind": "comunidade_graphify",
                 "title": title,
-                "files": ", ".join(files[:12]) + (" e outros" if len(files) > 12 else ""),
-                "file_count": str(len(files)),
+                "files": ", ".join(selected[:12]) + (" e outros" if len(selected) > 12 else ""),
+                "file_count": str(len(selected)),
             }
         )
     return sorted(proposals, key=lambda item: (-int(item["file_count"]), item["title"], item["id"]))
 
 
-def bootstrap_learning(root: Path, include_reviewed: bool = False) -> list[str]:
+def bootstrap_learning(
+    root: Path, include_reviewed: bool = False, min_files: int = 3, include_docs: bool = False
+) -> list[str]:
     """Mostra hipóteses iniciais revisáveis, derivadas somente do grafo já existente."""
-    proposals = bootstrap_proposals(root)
+    proposals = bootstrap_proposals(root, min_files=min_files, include_docs=include_docs)
     if not proposals:
         return [
             "Mapa inicial: graphify-out/graph.json ausente ou sem nós com arquivo-fonte; "
@@ -878,7 +886,7 @@ def bootstrap_learning(root: Path, include_reviewed: bool = False) -> list[str]:
     pending = [item for item in proposals if item["id"] not in feedback]
     lines = [
         "Mapa inicial do projeto: hipóteses derivadas do Graphify; nenhuma frente, relação ou documento foi criado.",
-        f"Propostas aguardando revisão: {len(pending)} de {len(proposals)}.",
+        f"Propostas aguardando revisão: {len(pending)} de {len(proposals)} (mínimo: {min_files} arquivo(s)).",
     ]
     for item in pending:
         lines.append(f"{item['id']} [proposta] {item['title']}: {item['file_count']} arquivo(s) — {item['files']}.")
@@ -893,11 +901,20 @@ def bootstrap_learning(root: Path, include_reviewed: bool = False) -> list[str]:
     return lines
 
 
-def record_bootstrap_feedback(root: Path, proposal_id: str, outcome: str, note: str) -> dict[str, str]:
+def record_bootstrap_feedback(
+    root: Path, proposal_id: str, outcome: str, note: str, min_files: int = 3, include_docs: bool = False
+) -> dict[str, str]:
     """Registra aceite ou rejeição explícitos; nunca transforma hipótese em estrutura canônica automática."""
     if outcome not in {"aceita", "rejeitada"}:
         raise ValueError("resultado deve ser aceita ou rejeitada")
-    proposal = next((item for item in bootstrap_proposals(root) if item["id"] == proposal_id), None)
+    proposal = next(
+        (
+            item
+            for item in bootstrap_proposals(root, min_files=min_files, include_docs=include_docs)
+            if item["id"] == proposal_id
+        ),
+        None,
+    )
     if proposal is None:
         raise ValueError("proposta inicial não encontrada ou não é mais aplicável")
     previous = _bootstrap_feedback(root)
@@ -991,6 +1008,20 @@ def _graph_reachable_files(root: Path, files: set[str], depth: int = 2) -> set[s
     }
 
 
+def _evidence(text: str, signals: set[str], path: Path, start_line: int = 1) -> dict[str, str] | None:
+    """Retorna a primeira ocorrência revisável, com arquivo, linha e termo."""
+    for offset, line in enumerate(text.splitlines()):
+        for signal in sorted(signals, key=lambda value: (-len(value), value.casefold())):
+            if signal and signal.casefold() in line.casefold():
+                return {
+                    "evidence_path": path.as_posix(),
+                    "evidence_line": str(start_line + offset),
+                    "matched_term": signal,
+                    "evidence_excerpt": " ".join(line.strip().split())[:240],
+                }
+    return None
+
+
 def _document_reference_suggestions(root: Path, front: str, metadata: dict[str, str]) -> list[dict[str, str]]:
     signals = {front, *_front_surface_files(root, front, metadata), *_references(metadata.get("modulos", ""))}
     suggestions: list[dict[str, str]] = []
@@ -999,22 +1030,23 @@ def _document_reference_suggestions(root: Path, front: str, metadata: dict[str, 
         text = decisions.read_text(encoding="utf-8", errors="replace")
         for match in re.finditer(r"(?ms)^##\s+(D-\d+)\b(.*?)(?=^##\s+|\Z)", text):
             decision, body = match.group(1), match.group(2)
-            if any(signal.casefold() in body.casefold() for signal in signals) and decision not in _references(
-                metadata.get("decisoes", "")
-            ):
+            evidence = _evidence(body, signals, decisions, text[: match.start(2)].count("\n") + 1)
+            if evidence is not None and decision not in _references(metadata.get("decisoes", "")):
                 suggestions.append(
                     {
                         "source": front,
                         "target": decision,
                         "field": "decisoes",
                         "reason": "decisão cita a frente ou sua superfície",
+                        **evidence,
                     }
                 )
     debts = root / "docs" / "ai" / "DEBITOS.md"
     if debts.is_file():
-        for line in debts.read_text(encoding="utf-8", errors="replace").splitlines():
+        for line_number, line in enumerate(debts.read_text(encoding="utf-8", errors="replace").splitlines(), start=1):
             debt = re.search(r"\b(DB-\d+)\b", line)
-            if debt and any(signal.casefold() in line.casefold() for signal in signals):
+            evidence = _evidence(line, signals, debts, line_number)
+            if debt and evidence is not None:
                 debt_id = debt.group(1)
                 if debt_id not in _references(metadata.get("debitos", "")):
                     suggestions.append(
@@ -1023,6 +1055,7 @@ def _document_reference_suggestions(root: Path, front: str, metadata: dict[str, 
                             "target": debt_id,
                             "field": "debitos",
                             "reason": "débito cita a frente ou sua superfície",
+                            **evidence,
                         }
                     )
     return suggestions
@@ -1078,7 +1111,56 @@ def relationship_suggestions(root: Path) -> list[dict[str, str]]:
     for suggestion in suggestions:
         raw = "\0".join(suggestion[key] for key in ("source", "target", "field", "reason"))
         suggestion["id"] = "S-" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:10]
-    return sorted(suggestions, key=lambda item: item["id"])
+    reviewed = _relationship_feedback(root)
+    return sorted((item for item in suggestions if item["id"] not in reviewed), key=lambda item: item["id"])
+
+
+def _relationship_feedback(root: Path) -> dict[str, str]:
+    path = root / RELATIONSHIP_FEEDBACK_RELATIVE
+    if not path.is_file():
+        return {}
+    outcomes: dict[str, str] = {}
+    text = path.read_text(encoding="utf-8", errors="replace")
+    for match in re.finditer(r"(?ms)^##\s+(S-[a-f0-9]+)\s*$\n(.*?)(?=^##\s+|\Z)", text):
+        outcome = re.search(r"(?m)^- resultado:\s*(rejeitada)\s*$", match.group(2))
+        if outcome:
+            outcomes[match.group(1)] = outcome.group(1)
+    return outcomes
+
+
+def reject_relationship_suggestion(root: Path, suggestion_id: str, note: str) -> dict[str, str]:
+    """Registra uma rejeição factual e retira somente essa hipótese da fila."""
+    suggestion = next((item for item in relationship_suggestions(root) if item["id"] == suggestion_id), None)
+    if suggestion is None:
+        raise ValueError("sugestão não encontrada ou não é mais aplicável")
+    note = _sanitize(note)
+    if not note:
+        raise ValueError("note é obrigatória para rejeitar uma sugestão")
+    path = root / RELATIONSHIP_FEEDBACK_RELATIVE
+    header = (
+        "# Feedback de sugestões de relação\n\n"
+        "> Registro append-only de hipóteses revisadas. "
+        "Uma rejeição não cria relação canônica.\n"
+    )
+    evidence = ""
+    if suggestion.get("evidence_path"):
+        evidence = (
+            f"- evidência: {suggestion['evidence_path']}:{suggestion['evidence_line']} "
+            f"(termo: {suggestion['matched_term']})\n"
+        )
+    entry = (
+        f"\n## {suggestion_id}\n\n- resultado: rejeitada\n"
+        f"- registrado_em: {datetime.now(timezone.utc).isoformat(timespec='seconds')}\n"
+        f"- relação: {suggestion['source']} --{suggestion['field']}-> {suggestion['target']}\n"
+        f"{evidence}- nota: {note}\n"
+    )
+    current = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else header
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(current.rstrip() + "\n" + entry, encoding="utf-8")
+    temporary.replace(path)
+    index(root)
+    return suggestion
 
 
 def accept_relationship_suggestion(root: Path, suggestion_id: str) -> dict[str, str]:
@@ -1321,10 +1403,12 @@ def _command(root: Path, args: argparse.Namespace) -> int:
     if args.command == "bootstrap":
         if args.accept or args.reject:
             outcome = "aceita" if args.accept else "rejeitada"
-            proposal = record_bootstrap_feedback(root, args.accept or args.reject, outcome, args.note or "")
+            proposal = record_bootstrap_feedback(
+                root, args.accept or args.reject, outcome, args.note or "", args.min_files, args.include_docs
+            )
             print(f"Feedback registrado: {proposal['id']} [{outcome}] em {BOOTSTRAP_FEEDBACK_RELATIVE.as_posix()}")
             return 0
-        for line in bootstrap_learning(root, args.history):
+        for line in bootstrap_learning(root, args.history, args.min_files, args.include_docs):
             print(line)
         return 0
     if args.command == "consolidate":
@@ -1366,6 +1450,10 @@ def _command(root: Path, args: argparse.Namespace) -> int:
             suggestion = accept_relationship_suggestion(root, args.accept)
             print(f"Sugestão aceita: {suggestion['id']} -> {suggestion['field']} em {suggestion['source']}")
             return 0
+        if args.reject:
+            suggestion = reject_relationship_suggestion(root, args.reject, args.note or "")
+            print(f"Sugestão rejeitada: {suggestion['id']} registrada em {RELATIONSHIP_FEEDBACK_RELATIVE.as_posix()}")
+            return 0
         suggestions = relationship_suggestions(root)
         if not suggestions:
             print("Nenhuma sugestão de relação no momento.")
@@ -1374,6 +1462,11 @@ def _command(root: Path, args: argparse.Namespace) -> int:
                 f"{suggestion['id']} [sugestão] {suggestion['source']} --{suggestion['field']}-> "
                 f"{suggestion['target']} ({suggestion['reason']})."
             )
+            if suggestion.get("evidence_path"):
+                print(
+                    f"  Evidência: {suggestion['evidence_path']}:{suggestion['evidence_line']} "
+                    f"termo `{suggestion['matched_term']}` — {suggestion['evidence_excerpt']}"
+                )
         return 0
     if args.command == "handoff":
         branch = args.branch or L.branch_atual(root)
@@ -1426,8 +1519,11 @@ def parser() -> argparse.ArgumentParser:
         "--gaps", action="store_true", help="Mostra lacunas de registro obrigatório e relações para revisão."
     )
     commands.add_parser("graph", help="Exporta o grafo de trabalho reconstruível em JSON.")
-    suggest = commands.add_parser("suggest", help="Lista ou aceita sugestões revisáveis de relações.")
-    suggest.add_argument("--accept", metavar="ID", help="Aceita uma sugestão corrente e grava a relação canônica.")
+    suggest = commands.add_parser("suggest", help="Lista, aceita ou rejeita sugestões revisáveis de relações.")
+    review = suggest.add_mutually_exclusive_group()
+    review.add_argument("--accept", metavar="ID", help="Aceita uma sugestão corrente e grava a relação canônica.")
+    review.add_argument("--reject", metavar="ID", help="Rejeita uma sugestão corrente e registra o critério factual.")
+    suggest.add_argument("--note", help="Fato verificado obrigatório ao rejeitar uma sugestão.")
     critical = commands.add_parser("critical", help="Mostra contexto crítico da frente e do grafo de código.")
     critical.add_argument("--branch")
     status = commands.add_parser("status", help="Reúne o painel operacional factual e somente leitura.")
@@ -1435,6 +1531,10 @@ def parser() -> argparse.ArgumentParser:
     status.add_argument("--depth", type=int, default=2, help="Profundidade do impacto Graphify (máximo: 4).")
     bootstrap = commands.add_parser("bootstrap", help="Propõe e aprende o mapa inicial do projeto via Graphify.")
     bootstrap.add_argument("--history", action="store_true", help="Inclui hipóteses iniciais já aceitas ou rejeitadas.")
+    bootstrap.add_argument("--min-files", type=int, default=3, help="Mínimo de arquivos por comunidade (padrão: 3).")
+    bootstrap.add_argument(
+        "--include-docs", action="store_true", help="Inclui comunidades somente de documentação e metadados."
+    )
     feedback = bootstrap.add_mutually_exclusive_group()
     feedback.add_argument("--accept", metavar="ID", help="Registra que uma hipótese inicial foi aceita.")
     feedback.add_argument("--reject", metavar="ID", help="Registra que uma hipótese inicial foi rejeitada.")
