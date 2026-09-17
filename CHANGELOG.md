@@ -10,6 +10,13 @@ Todas as mudanças relevantes do init-harness são registradas neste arquivo.
 - Templates de issue e pull request para relatos reproduzíveis e revisão de segurança.
 - Roadmap com avaliação em projetos reais e sincronização de equipes explicitamente registradas para o futuro.
 
+## [2.3.2] - 2026-09-17
+
+### Corrigido
+
+- Upgrade mantém baseline do kit para instalações antigas, reconhece hooks shell customizados e limpa candidatos de atualização já resolvidos.
+- `doctor` ignora referências textuais de débitos e mostra atualizações de kit pendentes de revisão.
+
 ## [2.3.1] - 2026-09-17
 
 ### Corrigido

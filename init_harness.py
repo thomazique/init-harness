@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 from datetime import date
@@ -14,7 +15,7 @@ from typing import Any
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-VERSION = "2.3.1"
+VERSION = "2.3.2"
 
 MANAGED_FILES = (
     "INIT-HARNESS.md",
@@ -123,6 +124,9 @@ def copy_managed(source: Path, target: Path, reporter: Reporter) -> None:
         old_content = baseline.read_bytes() if baseline.is_file() else None
         local_content = dst.read_bytes() if dst.is_file() else None
         if local_content == new_content:
+            candidate = _managed_candidate(target, relative)
+            if not reporter.dry_run and candidate.is_file():
+                candidate.unlink()
             if not reporter.dry_run and old_content != new_content:
                 _write_managed_baseline(target, relative, new_content)
             continue
@@ -143,7 +147,7 @@ def copy_managed(source: Path, target: Path, reporter: Reporter) -> None:
             candidate.parent.mkdir(parents=True, exist_ok=True)
             candidate.write_bytes(new_content)
             if old_content is None:
-                _write_managed_baseline(target, relative, local_content)
+                _write_managed_baseline(target, relative, new_content)
 
 
 def merge_settings(current: Any, required: Any) -> Any:
@@ -179,9 +183,14 @@ def _settings_item_matches(current: Any, required: Any) -> bool:
             if not isinstance(hook, dict):
                 return ()
             args = hook.get("args")
-            if not isinstance(args, list) or not args or not isinstance(args[-1], str):
+            if isinstance(args, list) and args and isinstance(args[-1], str):
+                values.append(Path(args[-1]).name)
+                continue
+            command = hook.get("command")
+            matches = re.findall(r"([A-Za-z0-9_.-]+\.py)\b", command) if isinstance(command, str) else []
+            if len(matches) != 1:
                 return ()
-            values.append(args[-1])
+            values.append(matches[0])
         return tuple(values)
 
     current_scripts, required_scripts = scripts(current_hooks), scripts(required_hooks)

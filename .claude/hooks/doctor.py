@@ -26,7 +26,10 @@ def _duplicate_ids(path: Path, pattern: str, first_column_only: bool = False) ->
         return {}
     matches: dict[str, list[int]] = {}
     for line_number, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1):
-        subject = line.split("|", 2)[1] if first_column_only and line.lstrip().startswith("|") and "|" in line else line
+        if first_column_only:
+            subject = line.split("|", 2)[1] if line.lstrip().startswith("|") and "|" in line else ""
+        else:
+            subject = line
         found = re.search(pattern, subject)
         if found:
             matches.setdefault(found.group(1), []).append(line_number)
@@ -160,6 +163,11 @@ def main() -> int:
         )
     else:
         ok.append("uv disponível no PATH")
+
+    updates = raiz / ".init-harness" / "updates"
+    pending_updates = list(updates.rglob("*.new")) if updates.is_dir() else []
+    if pending_updates:
+        avisos.append(f"{len(pending_updates)} atualização(ões) de kit pendentes de revisão em .init-harness/updates/")
 
     if h.get("grafo") == "graphify":
         if shutil.which("graphify"):
