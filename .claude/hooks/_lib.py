@@ -106,6 +106,7 @@ METODO_CLIENTE = (
     "INIT-HARNESS.md",
     ".claude/skills/init-harness/",
     ".claude/skills/spec/",
+    ".claude/skills/record/",
     ".claude/skills/pilares/",
     ".claude/skills/commit/",
     ".claude/skills/offboarding/",

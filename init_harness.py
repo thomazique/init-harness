@@ -15,7 +15,7 @@ from typing import Any
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-VERSION = "2.3.2"
+VERSION = "3.0.0"
 
 MANAGED_FILES = (
     "INIT-HARNESS.md",
@@ -26,6 +26,10 @@ MANAGED_FILES = (
     ".claude/hooks/guard_files.py",
     ".claude/hooks/memory.py",
     ".claude/hooks/memory_mcp.py",
+    ".claude/hooks/skill_evolution.py",
+    ".claude/hooks/skill_observe.py",
+    ".claude/hooks/skill_worker.py",
+    ".claude/hooks/skill_reviewer.py",
     ".claude/hooks/pre_compact.py",
     ".claude/hooks/session_start.py",
     ".claude/hooks/stop_check.py",
@@ -42,6 +46,7 @@ MANAGED_TREES = (
     ".claude/skills/commit",
     ".claude/skills/pilares",
     ".claude/skills/spec",
+    ".claude/skills/record",
 )
 PROJECT_TEMPLATES = {
     "CLAUDE.md": ".claude/skills/init-harness/templates/CLAUDE.template.md",
@@ -427,6 +432,65 @@ def run_optional_bootstrap(target: Path, reporter: Reporter) -> None:
     print(result.stdout.strip())
 
 
+def run_project_bootstrap(target: Path, reporter: Reporter) -> None:
+    """Materializa o contexto inicial sem inventar fatos de domínio."""
+    paths = (
+        target / ".init-harness" / "bootstrap",
+        target / ".init-harness" / "skills",
+        target / ".init-harness" / "memory",
+        target / "docs" / "ai" / "memoria",
+    )
+    for path in paths:
+        if path.is_dir():
+            continue
+        reporter.change(f"criar {path.relative_to(target).as_posix()}")
+        if not reporter.dry_run:
+            path.mkdir(parents=True, exist_ok=True)
+
+    skill_script = target / ".claude" / "hooks" / "skill_evolution.py"
+    skill_sync = {"status": "skipped", "skills": []}
+    if skill_script.is_file() and not reporter.dry_run:
+        result = subprocess.run(
+            [sys.executable, str(skill_script), "sync"],
+            cwd=target,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        skill_sync = {"status": "ok" if result.returncode == 0 else "failed", "output": result.stdout[-2000:]}
+        if result.returncode:
+            reporter.warn("catálogo inicial de skills não pôde ser sincronizado: " + result.stderr.strip())
+
+    graph = target / "graphify-out" / "graph.json"
+    fronts = target / "docs" / "ai" / "frentes"
+    debts = target / "docs" / "ai" / "DEBITOS.md"
+    report = {
+        "schema_version": 1,
+        "generated_at": date.today().isoformat(),
+        "analysis": {
+            "graph": {"present": graph.is_file(), "path": "graphify-out/graph.json"},
+            "fronts": (
+                sorted(path.relative_to(target).as_posix() for path in fronts.glob("*.md"))
+                if fronts.is_dir()
+                else []
+            ),
+            "debts": {"present": debts.is_file(), "path": "docs/ai/DEBITOS.md"},
+            "project_files": len([path for path in target.rglob("*") if path.is_file() and ".git" not in path.parts]),
+        },
+        "skills": skill_sync,
+        "notes": [
+            "Fatos estruturais foram apenas descobertos; hipóteses continuam revisáveis.",
+            "A análise Graphify não é executada automaticamente pelo instalador.",
+        ],
+    }
+    report_path = target / ".init-harness" / "bootstrap" / "report.json"
+    reporter.change("registrar relatório inicial do bootstrap")
+    if not reporter.dry_run:
+        report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
 def run_install(args: argparse.Namespace, source: Path) -> int:
     target = args.target.resolve()
     if not target.is_dir():
@@ -454,6 +518,7 @@ def run_install(args: argparse.Namespace, source: Path) -> int:
         reporter.preserve("MCP de memória opt-in: registre `python .claude/hooks/memory_mcp.py` no cliente desejado")
     if args.bootstrap:
         run_optional_bootstrap(target, reporter)
+        run_project_bootstrap(target, reporter)
     print(
         f"Resultado: {len(reporter.changed)} mudança(s), "
         f"{len(reporter.preserved)} arquivo(s) preservado(s), {len(reporter.warnings)} aviso(s)."

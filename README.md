@@ -1,8 +1,9 @@
-# init-harness
+# init-harness 3.0.0
 
-Inicializa repositórios Git para trabalho contínuo com agentes de IA. O kit
-combina contexto persistente, frentes e specs, validação, segurança operacional
-e adaptadores para Claude Code e Codex.
+Inicializa repositórios Git para trabalho contínuo com agentes de IA. A versão
+3.0 adiciona um ciclo controlado de aprendizado de skills: o projeto coleta
+experiências, processa sugestões em background com um agente econômico e envia
+somente análises que exigem julgamento para um revisor caro antes da aprovação.
 
 > Estado: projeto em evolução. O harness ajuda a estruturar trabalho com IA,
 > mas não substitui revisão humana, sandbox, CI, backups ou controles de acesso.
@@ -41,14 +42,17 @@ python init_harness.py install --target C:\projeto --memory-mcp
 # No cliente MCP escolhido, registre: python .claude/hooks/memory_mcp.py
 ```
 
-Em um projeto novo que já tenha `graphify-out/graph.json`, o mapa inicial é opt-in e revisável:
+Bootstrap inicial do projeto:
 
 ```powershell
 python init_harness.py install --target C:\projeto --bootstrap
-# Se o grafo ainda não existir, o bootstrap apenas informa o próximo passo.
-python .claude/hooks/memory.py bootstrap
-python .claude/hooks/memory.py bootstrap --accept B-... --note "Área confirmada na arquitetura."
+# Cria o contexto inicial, sincroniza skills e grava .init-harness/bootstrap/report.json
 ```
+
+O bootstrap preserva arquivos existentes, registra frentes e débitos encontrados,
+prepara memória e catálogo de skills e mantém hipóteses arquiteturais como propostas
+revisáveis. A análise semântica do Graphify continua uma etapa explícita quando o
+projeto ainda não possui `graphify-out/graph.json`.
 
 ## Atualização
 
@@ -74,7 +78,37 @@ e recebem somente migrações de referências conhecidas.
 - `docs/ai/` e `specs/`: memória operacional do projeto, pesquisável localmente por SQLite FTS5 reconstruível.
 - `docs/ai/memoria/handoffs/`: transições explícitas e versionáveis entre sessões/agentes.
 - `.githooks/`: enforcement independente do agente.
+- `.init-harness/skills/`: catálogo, experiências, propostas, avaliações e fila de evolução do projeto.
+- `.init-harness/bootstrap/report.json`: relatório factual produzido durante o bootstrap.
 - `tests/guardrails/`: testes copiados para cada instalação em modo próprio.
+
+## Evolução assíncrona de skills
+
+O fluxo da versão 3.0 é:
+
+```text
+uso da skill
+  → experiência observada
+  → fila persistente
+  → worker econômico
+  → análise preliminar
+  → revisor caro
+  → aprovação humana
+  → avaliação e promoção versionada
+```
+
+Os hooks não chamam modelos nem bloqueiam a sessão. Cada projeto fornece os runners
+que conectam seus agentes:
+
+```powershell
+python .claude/hooks/skill_worker.py --runner eval/cheap_worker.py --interval 30
+python .claude/hooks/skill_reviewer.py --runner eval/expensive_reviewer.py --interval 60
+python .claude/hooks/skill_evolution.py status
+```
+
+O worker econômico pode propor análises, mas não promove skills. O revisor caro valida
+as evidências, e a promoção continua dependendo de uma decisão humana explícita.
+Experiências não capturam prompts, credenciais ou raciocínio privado.
 
 ## Segurança
 

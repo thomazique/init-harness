@@ -18,6 +18,7 @@ sys.dont_write_bytecode = True  # não gerar __pycache__ no projeto
 
 import _lib as L  # noqa: E402
 import memory as M  # noqa: E402
+import skill_evolution as E  # noqa: E402
 
 
 def horas_desde(valor: str) -> float | None:
@@ -134,6 +135,17 @@ def main() -> None:
         linhas.append(
             f"Memória local indisponível ({exc.__class__.__name__}); os documentos canônicos continuam no disco."
         )
+
+    try:
+        evolution = E.evolution_status(r)
+        if evolution["total"]:
+            linhas.append(
+                "Evolução de skills: "
+                f"{evolution['queued']} na fila, {evolution['review_required']} aguardando revisão, "
+                f"{evolution['review_approved']} aguardando aprovação humana, {evolution['failed']} falhos."
+            )
+    except Exception:
+        pass
 
     saude = []
     hooks_path = L.git(["config", "--get", "core.hooksPath"], r)

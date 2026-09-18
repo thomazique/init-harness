@@ -489,12 +489,16 @@ def _legacy_consolidation_proposal(root: Path, branch: str) -> list[str]:
     front = front_path.relative_to(root).as_posix()
     changed = L.arquivos_alterados(root)
     code_files = sorted(path for path in changed if L.e_codigo(path))
+    declared = set(_references(frontmatter.get("files", "")))
+    for spec in _spec_paths(root, front, frontmatter):
+        declared.update(_frontmatter_list(spec.read_text(encoding="utf-8", errors="replace"), "files"))
+    code_files = sorted(code_files, key=lambda path: (path not in declared, path))
     lines = [f"Consolidação proposta para {front}: nenhum arquivo foi alterado."]
     if not code_files:
         return lines
     lines = [f"Consolidação proposta para {front}: nenhum arquivo foi alterado automaticamente."]
     lines.append(
-        "Código alterado no Git: " + ", ".join(code_files[:12]) + (" e outros." if len(code_files) > 12 else ".")
+        "Código alterado no Git: " + ", ".join(code_files[:20]) + (" e outros." if len(code_files) > 20 else ".")
     )
     lines.append("Checkpoint pendente a conferir: " + _checkpoint_summary(front_path) + ".")
     declared = set(_references(frontmatter.get("files", "")))
@@ -571,7 +575,7 @@ def consolidation_proposal(root: Path, branch: str) -> list[str]:
     code_files = sorted(path for path in L.arquivos_alterados(root) if L.e_codigo(path))
     lines = [f"Consolidação proposta para {front}: nenhum arquivo foi alterado automaticamente."]
     lines.append(
-        "Código alterado no Git: " + ", ".join(code_files[:12]) + (" e outros." if len(code_files) > 12 else ".")
+        "Código alterado no Git: " + ", ".join(code_files[:20]) + (" e outros." if len(code_files) > 20 else ".")
     )
     for item in items:
         lines.append(f"{item['id']} [proposta] {item['details']}. Checkpoint: {item['checkpoint']}.")

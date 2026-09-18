@@ -1,14 +1,26 @@
 # Changelog
 
-Todas as mudanças relevantes do init-harness são registradas neste arquivo.
+## 3.0.0 — evolução assíncrona de skills
+
+- Adicionado catálogo local de skills com manifestos, experiências, sugestões, propostas, avaliações e promoção versionada.
+- Adicionado registro manual por `/record` e captura estruturada via `capture-hook`.
+- Adicionado contexto de skill por sessão com `activate`, `active` e `deactivate`.
+- Adicionada observação de `PostToolUse` e `PostToolUseFailure`, com agregação de chamadas, falhas, duração e arquivos.
+- Adicionada consolidação automática de experiências no hook `Stop`.
+- Adicionado dataset de avaliação versionável, schema de casos e `validate-cases`.
+- Adicionada fila persistente de jobs de evolução.
+- Adicionados worker econômico e revisor caro como runners configuráveis e executados sem shell.
+- Adicionado gate de decisão humana com `review-job` e painel `status`.
+- Adicionado bootstrap inicial do projeto com sincronização do catálogo e `bootstrap/report.json`.
+- Sessões passam a exibir o estado da fila e das revisões no briefing inicial.
+
+O harness permanece agnóstico de provedor: cada projeto conecta seus próprios runners
+econômico e caro. Nenhum worker promove uma skill ou altera o `SKILL.md` ativo sem
+avaliação e aprovação explícitas.
 
 ## [Unreleased]
 
-### Adicionado
-
-- Documentação pública de licença, segurança, privacidade, contribuição, suporte e conduta.
-- Templates de issue e pull request para relatos reproduzíveis e revisão de segurança.
-- Roadmap com avaliação em projetos reais e sincronização de equipes explicitamente registradas para o futuro.
+Próximas melhorias permanecem condicionadas à validação em projetos reais.
 
 ## [2.3.2] - 2026-09-17
 
@@ -35,44 +47,27 @@ Todas as mudanças relevantes do init-harness são registradas neste arquivo.
 
 - Painel operacional `memory.py status`, somente leitura, para contexto, diagnóstico, impacto e itens de revisão.
 - Mapa inicial opt-in por comunidades do Graphify, com feedback local versionável em Markdown.
-- Opção `init_harness.py install --bootstrap`, que prepara e executa apenas a leitura do mapa existente; não executa Graphify nem cria estrutura automaticamente.
+- Opção `init_harness.py install --bootstrap`, que prepara e executa apenas a leitura do mapa existente.
 
 ## [2.2.0] - 2026-09-16
 
 ### Adicionado
 
-- Memória local: documentos Markdown canônicos indexados por SQLite FTS5 reconstruível.
-- Briefing de recuperação de contexto no `SessionStart` e comando portátil `memory.py query`.
-- Handoffs explícitos, versionáveis e pesquisáveis em `docs/ai/memoria/handoffs/`.
-- Aceite único de handoff, com estado tipado no índice local e registro auditável no Markdown.
-- Servidor MCP stdio opcional e sem dependências para briefing, busca e handoffs.
+- Memória local com SQLite FTS5 reconstruível, briefing de recuperação de contexto, handoffs versionáveis e MCP stdio opcional.
+- Testes unitários e de integração para memória e transferência entre sessões.
 
 ### Segurança
 
-- A memória não captura prompts, comandos ou tool calls; handoffs rejeitam padrões fortes de segredo.
-- Conteúdo recuperado é apresentado como evidência histórica, nunca como instrução executável.
+- A memória não captura prompts, comandos ou tool calls; conteúdo recuperado é apresentado como evidência histórica.
 
 ## [2.1.0] - 2026-09-14
 
 ### Adicionado
 
 - CLI idempotente para instalação, atualização, migração e diagnóstico.
-- Configuração neutra em `.init-harness/config.json` e respectivo JSON Schema.
-- Adaptador Codex por meio de `AGENTS.md`.
-- Níveis explícitos de autonomia para tarefas seguras e ações de risco.
-- Testes unitários e de integração dos guardrails e do instalador.
-- Workflow de CI em Windows e Linux com Python 3.10–3.13.
-- Diagnóstico de integridade, portabilidade, Graphify e conflitos de frentes.
+- Configuração neutra em `.init-harness/config.json`, adaptador Codex, níveis de autonomia, guardrails e CI multiplataforma.
 
 ### Alterado
 
 - Projeto renomeado de `claude-harness` para `init-harness`.
 - Documento principal renomeado para `INIT-HARNESS.md`.
-- Skill de implantação renomeada para `init-harness`.
-- Conteúdo editorial e artefatos deixam de ser classificados como código.
-- Uma branch passa a aceitar no máximo uma frente não concluída.
-
-### Migração
-
-O comando `python init_harness.py upgrade --target <projeto>` migra instalações
-2.0.0/2.1.0 legadas, preservando arquivos específicos do projeto.

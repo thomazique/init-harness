@@ -1,6 +1,6 @@
 # INIT-HARNESS.md
 
-> **harness_version: 2.3.2**
+> **harness_version: 3.0.0**
 > Protocolo de operação genérico, válido para qualquer projeto. O que o projeto **é** fica em `CLAUDE.md` e `docs/ai/`. Aqui fica **como** operar. Este arquivo não é editado por projeto.
 
 ---
@@ -40,7 +40,7 @@
 
 ```json
 {
-  "harness_version": "2.3.2",
+  "harness_version": "3.0.0",
   "modo": "proprio",
   "instalado_em": "AAAA-MM-DD",
   "providers": ["claude", "codex"],
@@ -66,7 +66,7 @@
 - `modo`: `proprio` (tudo versionado, harness permanece) ou `cliente` (método fora do versionamento e removido no offboarding).
 - `grafo`: `graphify` ou `manual` (instalação falhou ou é inviável; ver seção 13).
 - `memoria.mcp`: opção explícita da implantação. `true` informa que o projeto quer expor briefing, busca e handoffs por MCP; o cliente continua precisando registrar `python .claude/hooks/memory_mcp.py` com o projeto como cwd.
-- `bootstrap.opt_in`: registra que a instalação foi iniciada com o mapa revisável. `init_harness.py install --bootstrap` apenas lê o grafo já existente; nunca executa Graphify nem cria estrutura por conta própria.
+- `bootstrap.opt_in`: registra que a instalação foi iniciada com o bootstrap adaptativo. `init_harness.py install --bootstrap` preserva fatos existentes, sincroniza o catálogo e grava um relatório inicial; não inventa fatos de domínio.
 - `providers`: adaptadores instalados. `claude` ativa settings/hooks nativos; `codex` gera `AGENTS.md`.
 - `autonomia`: define se tarefas seguras e checkpoints podem ser encadeados e mantém confirmação ou bloqueio para ações de risco.
 - `frente_inativa_horas`: após quantas horas sem `atualizado_em` uma frente `ativa` pode ser assumida. `null` obriga a perguntar.
@@ -421,6 +421,138 @@ A camada que permanece no modo `cliente` precisa operar sem este arquivo. O offb
 | `spec` | Tarefa não trivial |
 | `pilares` | Implantação, antes de frente grande, mudança de tier |
 | `commit` | Commit, branch ou PR |
+| `record` | Registro de experiência relevante para evolução de skill |
 | `offboarding` | Encerramento de implantação em modo `cliente` |
 
 Diagnóstico da instalação: `uv run --no-project --python ">=3.10" .claude/hooks/doctor.py`.
+
+---
+
+## 18. Catálogo de skills do projeto
+
+O catálogo e o ciclo controlado de evolução são mantidos por
+`.claude/hooks/skill_evolution.py`. O harness registra evidências, sugere melhorias,
+executa avaliações externas e só promove uma versão após aprovação explícita.
+
+```text
+python .claude/hooks/skill_evolution.py list
+python .claude/hooks/skill_evolution.py sync
+python .claude/hooks/skill_evolution.py inspect <skill>
+python .claude/hooks/skill_evolution.py record <skill> --task-id <id> --outcome success --summary "..."
+python .claude/hooks/skill_evolution.py experiences <skill> --limit 20
+python .claude/hooks/skill_evolution.py suggestions <skill>
+python .claude/hooks/skill_evolution.py propose <skill> --suggestion <S-ID> --owner <identificador>
+python .claude/hooks/skill_evolution.py proposals <skill>
+python .claude/hooks/skill_evolution.py evaluate <skill> --proposal <P-ID> --baseline-score 0.70 --candidate-score 0.82
+python .claude/hooks/skill_evolution.py evaluate-results <skill> --proposal <P-ID> --results eval/results.json
+python .claude/hooks/skill_evolution.py accept <skill> --proposal <P-ID>
+python .claude/hooks/skill_evolution.py configure-evaluation <skill> --metric correctness --minimum-improvement 0.05
+python .claude/hooks/skill_evolution.py configure-usage <skill> --when "..." --expected-outcome "..."
+python .claude/hooks/skill_evolution.py init-evaluation <skill>
+python .claude/hooks/skill_evolution.py validate-cases <skill>
+python .claude/hooks/skill_evolution.py run-evaluation <skill> --proposal <P-ID> --runner eval/runner.py
+echo '{"skill_experience":{"skill":"<skill>","task_id":"<id>","outcome":"success","summary":"fato observado"}}' |
+  python .claude/hooks/skill_evolution.py capture-hook
+python .claude/hooks/skill_evolution.py activate <skill> --session-id <id>
+python .claude/hooks/skill_evolution.py active --session-id <id>
+python .claude/hooks/skill_evolution.py deactivate --session-id <id>
+python .claude/hooks/skill_evolution.py jobs --status queued
+python .claude/hooks/skill_worker.py --runner eval/cheap_worker.py --once
+python .claude/hooks/skill_reviewer.py --runner eval/expensive_reviewer.py --once
+python .claude/hooks/skill_evolution.py review-job <J-ID> --decision approved --note "revisado"
+python .claude/hooks/skill_evolution.py status
+```
+
+`sync` escreve `.init-harness/skills/registry.json` e um `manifest.json` por skill.
+Skills `init-harness`, `spec`, `pilares`, `commit`, `offboarding` e `record` são classificadas
+como método; as demais são classificadas como skills próprias do projeto. O catálogo
+preserva versão, status, risco e data da última avaliação para as próximas etapas de
+proposta e avaliação.
+
+Experiências são append-only em `.init-harness/skills/<skill>/experiences.jsonl`.
+O registro deve conter uma tarefa, resultado e resumo factual; pode incluir score,
+tipo de falha, correção humana, ferramentas, arquivos afetados, métricas e tags.
+Não registrar prompts completos, credenciais ou raciocínio privado. O registro é
+evidência para uma proposta futura, não altera a skill ativa.
+
+O hook `Stop` aceita um bloco estruturado opcional `skill_experience` no evento,
+com `skill`, `task_id`, `outcome` e `summary` (e opcionalmente score, falha,
+ferramentas, arquivos, métricas e tags). Quando esses sinais estiverem presentes,
+o harness registra a experiência automaticamente como `source=system`; sem os
+campos mínimos, não cria ruído nem tenta interpretar a transcrição. A captura é
+idempotente por sessão/tarefa/resumo. Use `/record` ou o comando `record` quando
+uma experiência não tiver sido emitida pelo cliente.
+
+Os hooks `PostToolUse` e `PostToolUseFailure` acumulam, quando existe uma skill
+ativa, contagem de ferramentas, falhas, duração e arquivos relativos no estado
+da sessão. Esses dados não viram experiências isoladas: o `Stop` os agrega ao
+resumo final e limpa o acumulador quando o registro é concluído.
+
+Quando o cliente não envia `outcome` e `summary`, o `Stop` só cria um registro
+automático se houver chamadas observadas. Zero falhas gera `success`, todas as
+chamadas com falha geram `failure`, uma mistura gera `partial`, e um sinal
+explícito de bloqueio gera `blocked`. O score inicial é a razão de chamadas sem
+falha e serve como evidência operacional, não como aprovação da skill.
+
+Clientes externos podem usar `capture-hook` com o mesmo contrato JSON. O comando
+retorna `{ "captured": true, "experience": ... }` quando registrou o evento e
+`captured: false` quando o bloco não tem os campos mínimos. O adaptador não lê
+transcrições, prompts, credenciais ou raciocínio; o cliente deve enviar apenas
+fatos observáveis.
+
+`activate` mantém a skill ativa no estado persistente da sessão. O hook `Stop`
+usa esse contexto como fallback quando o evento não repetir o nome da skill; a
+ativação não cria experiência sozinha e pode ser encerrada com `deactivate`.
+
+Cada experiência registrada também cria um job `skill_experience_analysis` em
+`.init-harness/skills/queue/`. A fila é idempotente e persistente; hooks apenas
+registram o job, sem chamar modelos ou bloquear a sessão. O worker econômico será
+responsável por consumir esses jobs em background.
+
+O runner econômico recebe `--job`, `--output` e `--root`. Deve ler o job, produzir
+um objeto JSON de análise e indicar `needs_review: true` quando a análise precisar
+do agente caro. O worker não usa shell, aplica timeout e registra falhas no próprio
+job. A revisão cara será uma etapa separada e nunca é executada pelo hook.
+
+Quando uma experiência cria um padrão recorrente — duas ocorrências do mesmo tipo
+ou uma correção humana explícita — o harness cria uma sugestão em
+`.init-harness/skills/<skill>/suggestions.jsonl`, vinculada aos IDs das experiências
+que a sustentam. Sugestões são somente propostas: não alteram, promovem ou fazem
+rollback de skills.
+
+Uma sugestão pode ser materializada como proposta com `propose`. Isso cria um
+diretório versionável em `.init-harness/skills/<skill>/proposals/`, contendo o
+manifesto JSON, o hash da skill ativa, as evidências vinculadas e um checklist de
+avaliação. A criação da proposta não modifica o `SKILL.md`.
+
+`evaluate` exige que a candidata tenha frontmatter válido, seja diferente da base,
+melhore o score, não tenha regressões e não tenha falhas de guardrail. Se aprovada,
+`accept` promove a candidata, incrementa a versão, salva um snapshot em `history/`
+e só então altera o `SKILL.md` ativo. Qualquer mudança concorrente na skill ativa
+invalida a proposta por hash.
+
+`init-evaluation` cria `.init-harness/skills/<skill>/eval/cases/`. O runner específico
+do projeto recebe `--base`, `--candidate`, `--cases` e `--output`, e deve produzir o
+JSON de resultados nesse caminho. Ele é executado sem shell, com timeout padrão de 300
+segundos. O harness valida o arquivo produzido e aplica a política da skill.
+
+O diretório de casos contém um `schema.json` e fixtures `*.json` versionáveis. Cada
+fixture exige apenas `case_id`; campos como `task`, `input`, `expected` e `tags` ficam
+disponíveis para o runner do projeto. `validate-cases` detecta JSON inválido, IDs
+duplicados e casos obrigatórios ausentes antes da execução.
+
+A política é específica por skill e fica no manifesto. Ela define a métrica principal,
+se maior ou menor é melhor, melhoria mínima, tolerância a regressões, tolerância a
+falhas de guardrail, dimensões e casos obrigatórios. `evaluate` usa essa política;
+parâmetros explícitos na linha de comando servem apenas como override auditável.
+
+O contrato de uso é específico por skill e registra `when`, `when_not`, ferramentas,
+superfícies afetadas, resultado esperado e risco. Uma skill não deve ser considerada
+pronta para evolução enquanto seu contrato de uso estiver vazio ou ambíguo.
+
+Para avaliação por suíte, um runner do projeto produz um JSON com `cases`. Cada
+caso informa `case_id`, `baseline_score`, `candidate_score`, `baseline_passed`,
+`candidate_passed` e `guardrail_failures`. O comando `evaluate-results` calcula as
+médias, regressões e falhas automaticamente e aplica a política da skill. O harness
+não executa comandos arbitrários do JSON; o runner continua sendo específico do
+projeto e deve produzir somente resultados observáveis.
