@@ -1534,7 +1534,8 @@ def configure_usage(root: Path, skill: str, args: argparse.Namespace) -> dict[st
     }
     if not registry_path(root).is_file():
         sync_registry(root)
-    _update_registry_skill(root, skill, {"usage_contract": contract})
+    # O risco do contrato é declarado por um humano: vale também para o manifesto, que antes divergia dele.
+    _update_registry_skill(root, skill, {"usage_contract": contract, "risk": args.risk})
     return contract
 
 

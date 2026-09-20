@@ -21,7 +21,7 @@ Comandos: `python .claude/hooks/skill_evolution.py <comando>`.
 
 ## Procedimento
 
-1. **Escolher.** `suggestions <skill>`: uma com `status: proposed` (`in_progress` já tem proposta; `addressed` já foi promovida). Sem sugestão aberta, não há evidência para evoluir: parar. Um job aprovado com `review-job` já abriu a proposta (`proposals <skill>`); sem proposta ainda: `propose <skill> --suggestion <S-ID> --owner <quem pediu>`.
+1. **Escolher.** `suggestions <skill>`: uma com `status: proposed` (`in_progress` já tem proposta; `addressed` já foi promovida). Sem sugestão aberta, não há evidência para evoluir: parar. Um job aprovado com `review-job` já abriu a proposta (`proposals <skill>`); sem proposta ainda: `propose <skill> --suggestion <S-ID> --owner <identificador de quem pediu, sem e-mail>` (o campo vai para `proposal.json`, que é versionado).
 2. **Ler.** `proposal-context <skill> --proposal <P-ID>` devolve evidência, política e contrato. Ler também a `SKILL.md` em `base_path`.
    - `active_matches_base: false`: a skill ativa mudou. Recriar a proposta.
    - `usage_contract_ready: false`: o contrato de uso é do humano. Propor um a partir da description e da evidência, pedir confirmação e só então `configure-usage`. Não seguir sem ele.
@@ -32,7 +32,7 @@ Comandos: `python .claude/hooks/skill_evolution.py <comando>`.
 5. **Escrever a candidata.** Editar `candidate_path`. O frontmatter continua na linha 1 com `name` igual ao da skill; `description` só muda se a evidência for de disparo errado.
 6. **Registrar.** `submit-candidate <skill> --proposal <P-ID> --summary "<o que mudou e por quê, ligado à evidência>"`. Erro de validação: corrigir a candidata e repetir.
 7. **Avaliar.** `run-evaluation <skill> --proposal <P-ID> --runner .claude/skills/evolve/runners/static_eval.py` (ou o runner do projeto). O `static_eval` só verifica o texto da skill: ao reportar, dizer que a avaliação é estrutural e não mede comportamento. Sem casos com asserções: parar e reportar "candidata pronta, avaliação pendente". `evaluate` com números só quando o humano os fornecer.
-8. **Entregar.** Reportar a sugestão de origem, o que mudou, o resultado da avaliação e o comando `accept` para o usuário decidir. Resultado `rejected`: revisar a candidata (passo 5) e repetir a partir do 6, ou parar e reportar.
+8. **Entregar.** Reportar a sugestão de origem, o que mudou, o resultado da avaliação e o comando para o usuário decidir, sem executá-lo: `python .claude/hooks/skill_evolution.py accept <skill> --proposal <P-ID>`. Decisões de política que a evidência não resolve (por exemplo, o modo de arredondamento) vão ao usuário, não à candidata. Resultado `rejected`: revisar a candidata (passo 5) e repetir a partir do 6, ou parar e reportar.
 
 ---
 

@@ -1019,6 +1019,34 @@ class SkillEvolutionTest(unittest.TestCase):
                 ["J-0000000000aa", first["job_id"]], [job["job_id"] for job in skill_evolution.read_jobs(root)]
             )
 
+    def test_configure_usage_grava_o_risco_no_manifesto_e_no_contrato(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._project_with_skills(root, "billing")
+            skill_evolution.sync_registry(root)
+            args = skill_evolution.parser().parse_args(
+                [
+                    "--root",
+                    str(root),
+                    "configure-usage",
+                    "billing",
+                    "--when",
+                    "cobrar",
+                    "--expected-outcome",
+                    "x",
+                    "--risk",
+                    "high",
+                ]
+            )
+
+            skill_evolution.configure_usage(root, "billing", args)
+            skill_evolution.sync_registry(root)
+
+            item = skill_evolution.load_registry(root)["skills"][0]
+            manifest = json.loads((root / ".init-harness/skills/billing/manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(("high", "high"), (item["risk"], item["usage_contract"]["risk"]))
+            self.assertEqual("high", manifest["risk"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

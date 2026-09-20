@@ -2,6 +2,7 @@
 
 ## Não lançado
 
+- Ajustes apontados por testes com um agente real (`claude -p`) e com `upgrade` de projetos 3.0: a skill `evolve` traz a sintaxe do `accept`, pede `--owner` sem e-mail (o campo é versionado) e manda decisões de política ao usuário; o `doctor` aponta o `.new` do kit quando uma skill editada localmente está quebrada; e `configure-usage` grava o risco também no manifesto, que divergia do contrato.
 - Corrigida a falha de jobs: `retry-job` devolve um job `failed` à fila (à revisão, se já havia análise); um job `processing` de um worker morto é marcado `failed` sozinho após 30 minutos (`recover-jobs` faz isso sob demanda); um `.worker.lock` com mais de 60 s deixa de bloquear a fila; e os arquivos de job passam a ser gravados de forma atômica. O revisor conta `review_attempts`.
 - Corrigida a validação de caminhos relativos: `..\segredo.txt` era aceito no Linux, onde a barra invertida não é separador para `Path`. `record --file`, os arquivos observados nos hooks e o arquivo de resultados de avaliação agora recusam `..` e caminhos absolutos escritos com `/` ou `\` em qualquer sistema. Esse teste já falhava nos 4 jobs de Linux da CI da `main`.
 - Ligada a fila às propostas: `review-job --decision approved` abre a proposta de evolução (reusando ou criando a sugestão da experiência), o job guarda `proposal_id` e `suggestion_id`, e `accept` marca os jobs vinculados como `promoted`. A decisão não é gravada se a proposta não puder ser criada. `review-job` ganhou `--owner`; o ciclo de status dos jobs está documentado no `INIT-HARNESS.md`.
