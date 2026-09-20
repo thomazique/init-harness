@@ -1,4 +1,4 @@
-# init-harness 3.0.0
+# init-harness 3.1.0
 
 Inicializa repositórios Git para trabalho contínuo com agentes de IA. A versão
 3.0 introduziu um ciclo controlado de aprendizado de skills e a 3.1 o fecha: a skill

@@ -1,6 +1,6 @@
 # Changelog
 
-## Não lançado
+## 3.1.0 — ciclo de evolução de skills completo
 
 - Ajustes apontados por testes com um agente real (`claude -p`) e com `upgrade` de projetos 3.0: a skill `evolve` traz a sintaxe do `accept`, pede `--owner` sem e-mail (o campo é versionado) e manda decisões de política ao usuário; o `doctor` aponta o `.new` do kit quando uma skill editada localmente está quebrada; e `configure-usage` grava o risco também no manifesto, que divergia do contrato.
 - Corrigida a falha de jobs: `retry-job` devolve um job `failed` à fila (à revisão, se já havia análise); um job `processing` de um worker morto é marcado `failed` sozinho após 30 minutos (`recover-jobs` faz isso sob demanda); um `.worker.lock` com mais de 60 s deixa de bloquear a fila; e os arquivos de job passam a ser gravados de forma atômica. O revisor conta `review_attempts`.
