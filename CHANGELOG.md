@@ -2,6 +2,7 @@
 
 ## Não lançado
 
+- Corrigida a fila de evolução: os jobs eram processados em ordem aleatória (ordenados pelo UUID do arquivo) e passam a seguir a ordem de criação.
 - Adicionada a skill `evolve` e os comandos `proposal-context` e `submit-candidate`, que fecham o passo entre `propose` e `evaluate`: um agente lê a evidência, escreve a candidata, registra o resumo e leva a proposta até a avaliação, sem promover a skill. Testes cobrem o contexto, a validação da candidata e o registro das skills de método no instalador.
 - Corrigida a promoção de propostas: `accept` agora recusa uma candidata alterada depois da avaliação, que antes podia virar a skill ativa sem ter sido avaliada.
 - Corrigido frontmatter das skills `commit` e `spec`, que começava com linha em branco e ficava sem `description` no catálogo e no cliente. Adicionado teste contra as skills reais do kit.

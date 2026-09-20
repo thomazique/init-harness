@@ -119,7 +119,7 @@ def enqueue_analysis_job(root: Path, event: dict[str, Any]) -> dict[str, Any]:
         "skill": event["skill"],
         "experience_event_id": event["event_id"],
         "experience": event,
-        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "created_at": datetime.now(timezone.utc).isoformat(timespec="microseconds"),
         "attempts": 0,
     }
     _job_file(root, job["job_id"]).write_text(json.dumps(job, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -135,7 +135,8 @@ def read_jobs(root: Path, status: str | None = None) -> list[dict[str, Any]]:
             raise ValueError(f"job inválido em {path}") from exc
         if status is None or job.get("status") == status:
             jobs.append(job)
-    return jobs
+    # O nome do arquivo é um UUID aleatório; a ordem de criação vem de created_at.
+    return sorted(jobs, key=lambda job: str(job.get("created_at") or ""))
 
 
 def update_job(root: Path, job_id: str, status: str, **updates: Any) -> dict[str, Any]:

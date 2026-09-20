@@ -743,6 +743,21 @@ class SkillEvolutionTest(unittest.TestCase):
             with self.subTest(skill=item["id"]):
                 self.assertEqual("method", item["scope"], "registre a skill em METHOD_SKILLS")
 
+    def test_fila_de_jobs_segue_a_ordem_de_criacao(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._project_with_skills(root, "billing")
+            created = [
+                skill_evolution.enqueue_analysis_job(root, {"event_id": f"E-{number}", "skill": "billing"})
+                for number in range(12)
+            ]
+
+            queued = skill_evolution.read_jobs(root, "queued")
+            claimed = skill_evolution.claim_next_job(root)
+
+            self.assertEqual([job["job_id"] for job in created], [job["job_id"] for job in queued])
+            self.assertEqual(created[0]["job_id"], claimed["job_id"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
