@@ -509,6 +509,8 @@ A ativação é automática: o hook `PreToolUse` com matcher `Skill` chama
 projeto (skills de plugins ou do usuário são ignoradas). Ao invocar outra skill na
 mesma sessão, a observação da anterior é fechada como experiência própria antes da
 troca, para que suas chamadas não sejam atribuídas à nova.
+O `doctor.py` reprova a instalação se esse hook não estiver registrado ou se algum
+`SKILL.md` tiver frontmatter ilegível.
 
 Cada experiência registrada também cria um job `skill_experience_analysis` em
 `.init-harness/skills/queue/`. A fila é idempotente e persistente; hooks apenas
