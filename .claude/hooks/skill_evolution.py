@@ -102,10 +102,15 @@ def _job_file(root: Path, job_id: str) -> Path:
     return queue_path(root) / f"{job_id}.json"
 
 
+def _job_paths(root: Path) -> list[Path]:
+    """Arquivos de job da fila; J-<id>.analysis.json e J-<id>.review.json são saídas de runners."""
+    return sorted(path for path in queue_path(root).glob("J-*.json") if re.fullmatch(r"J-[0-9a-f]+\.json", path.name))
+
+
 def enqueue_analysis_job(root: Path, event: dict[str, Any]) -> dict[str, Any]:
     """Adiciona um job idempotente para análise assíncrona da experiência."""
     queue_path(root).mkdir(parents=True, exist_ok=True)
-    for path in queue_path(root).glob("J-*.json"):
+    for path in _job_paths(root):
         try:
             existing = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -128,7 +133,7 @@ def enqueue_analysis_job(root: Path, event: dict[str, Any]) -> dict[str, Any]:
 
 def read_jobs(root: Path, status: str | None = None) -> list[dict[str, Any]]:
     jobs: list[dict[str, Any]] = []
-    for path in sorted(queue_path(root).glob("J-*.json")):
+    for path in _job_paths(root):
         try:
             job = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
@@ -146,6 +151,7 @@ def update_job(root: Path, job_id: str, status: str, **updates: Any) -> dict[str
         "analyzed",
         "review_required",
         "review_approved",
+        "human_required",
         "approved",
         "rejected",
         "promoted",
@@ -188,8 +194,8 @@ def decide_job(root: Path, job_id: str, decision: str, note: str) -> dict[str, A
     if not note.strip():
         raise ValueError("note é obrigatório para a decisão humana")
     current = next((job for job in read_jobs(root) if job.get("job_id") == job_id), None)
-    if current is None or current.get("status") != "review_approved":
-        raise ValueError("job precisa estar review_approved para aprovação humana")
+    if current is None or current.get("status") not in {"review_approved", "human_required"}:
+        raise ValueError("job precisa estar em review_approved ou human_required para decisão humana")
     return update_job(
         root,
         job_id,
@@ -203,10 +209,13 @@ def evolution_status(root: Path) -> dict[str, Any]:
     return {
         "queued": sum(job.get("status") == "queued" for job in jobs),
         "processing": sum(job.get("status") == "processing" for job in jobs),
+        "analyzed": sum(job.get("status") == "analyzed" for job in jobs),
         "review_required": sum(job.get("status") == "review_required" for job in jobs),
         "review_approved": sum(job.get("status") == "review_approved" for job in jobs),
+        "human_required": sum(job.get("status") == "human_required" for job in jobs),
         "approved": sum(job.get("status") == "approved" for job in jobs),
         "rejected": sum(job.get("status") == "rejected" for job in jobs),
+        "promoted": sum(job.get("status") == "promoted" for job in jobs),
         "failed": sum(job.get("status") == "failed" for job in jobs),
         "total": len(jobs),
     }
@@ -1506,6 +1515,7 @@ def parser() -> argparse.ArgumentParser:
             "analyzed",
             "review_required",
             "review_approved",
+            "human_required",
             "approved",
             "rejected",
             "promoted",

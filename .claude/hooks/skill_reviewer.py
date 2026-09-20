@@ -57,8 +57,15 @@ def review_once(root: Path, runner_file: str, timeout: int) -> dict | None:
         review = json.loads(output.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         return E.update_job(root, job["job_id"], "failed", error=f"revisão inválida: {exc}")
-    approved = isinstance(review, dict) and review.get("approved") is True and review.get("needs_human") is not True
-    return E.update_job(root, job["job_id"], "review_approved" if approved else "rejected", review=review)
+    if not isinstance(review, dict):
+        return E.update_job(root, job["job_id"], "failed", error="revisão inválida: esperado um objeto JSON")
+    if review.get("needs_human") is True:
+        status = "human_required"  # o revisor não decide sozinho: o job segue visível para a decisão humana
+    elif review.get("approved") is True:
+        status = "review_approved"
+    else:
+        status = "rejected"
+    return E.update_job(root, job["job_id"], status, review=review)
 
 
 def main() -> int:

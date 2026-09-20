@@ -250,6 +250,9 @@ class QueueTest(unittest.TestCase):
         for body, expected in (
             ("json.dump({'approved': True}, open(a.output, 'w'))\n", "review_approved"),
             ("json.dump({'approved': False}, open(a.output, 'w'))\n", "rejected"),
+            ("json.dump({'approved': False, 'needs_human': True}, open(a.output, 'w'))\n", "human_required"),
+            ("json.dump({'approved': True, 'needs_human': True}, open(a.output, 'w'))\n", "human_required"),
+            ("json.dump([1, 2], open(a.output, 'w'))\n", "failed"),
             ("sys.exit(3)\n", "failed"),
             ("open(a.output, 'w').write('nao e json')\n", "failed"),
         ):
@@ -276,6 +279,44 @@ class QueueTest(unittest.TestCase):
             self.assertEqual("approved", decided["status"])
             self.assertEqual("evidência sólida", decided["human_decision"]["note"])
             self.assertEqual(1, E.evolution_status(root)["approved"])
+
+    def test_job_que_o_revisor_pede_humano_nao_some_entre_os_rejeitados(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = project(tmp)
+            job_id = self.queue_job_for_review(root)
+            runner = self.fake_runner(root, "json.dump({'approved': False, 'needs_human': True}, open(a.output, 'w'))\n")
+
+            skill_reviewer.review_once(root, runner, 60)
+
+            status = E.evolution_status(root)
+            self.assertEqual((1, 0), (status["human_required"], status["rejected"]))
+            decided = E.decide_job(root, job_id, "rejected", "não procede")
+            self.assertEqual("rejected", decided["status"])
+            self.assertEqual((0, 1), (E.evolution_status(root)["human_required"], E.evolution_status(root)["rejected"]))
+
+    def test_saidas_dos_runners_nao_sao_lidas_como_jobs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = project(tmp)
+            job_id = self.queue_job_for_review(root)
+            skill_reviewer.review_once(root, self.fake_runner(root, "json.dump({'approved': True}, open(a.output, 'w'))\n"), 60)
+            names = sorted(path.name for path in E.queue_path(root).iterdir())
+
+            self.assertEqual([f"{job_id}.analysis.json", f"{job_id}.json", f"{job_id}.review.json"], names)
+            self.assertEqual([job_id], [job["job_id"] for job in E.read_jobs(root)])
+            self.assertEqual(1, E.evolution_status(root)["total"])
+            existing = E.read_jobs(root)[0]
+            self.assertEqual(job_id, E.enqueue_analysis_job(root, existing["experience"])["job_id"], "idempotência usa só os jobs")
+
+    def test_painel_conta_todos_os_status_de_job(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = project(tmp)
+            record(root, "t1", "success")
+            skill_worker.process_once(root, f"{RUNNER_PATH}/worker_static.py", 60)
+
+            status = E.evolution_status(root)
+
+            self.assertEqual(1, status["analyzed"])
+            self.assertEqual(status["total"], sum(value for key, value in status.items() if key != "total"))
 
     def test_worker_nao_processa_com_outro_worker_ativo(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

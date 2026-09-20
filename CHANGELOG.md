@@ -2,6 +2,8 @@
 
 ## Não lançado
 
+- Corrigida a listagem da fila: `J-<id>.analysis.json` e `.review.json`, saídas dos runners gravadas na mesma pasta, eram lidos como jobs e apareciam em `jobs` e no `total` de `status` sem `job_id` nem `status`.
+- Corrigido o destino de um job cujo revisor sinaliza `needs_human: true`: ele era marcado `rejected` e sumia entre os rejeitados. Passa ao novo status `human_required`, que `review-job` aceita, junto com `review_approved`. `status` agora também conta `analyzed`, `human_required` e `promoted`.
 - Sugestões de evolução passam a ser vivas: novas ocorrências do padrão atualizam `occurrences` e `evidence_event_ids` em vez de ficarem congeladas na primeira. A sugestão ganha ciclo de vida (`proposed`, `in_progress`, `addressed`); depois de promovida, só ocorrências posteriores abrem uma nova. `record` informa também `updated_suggestions`.
 - Adicionados runners de referência em `.claude/skills/evolve/runners/`: `worker_static.py` (triagem determinística), `reviewer_claude.py` (revisor via `claude -p`, opt-in) e `static_eval.py` (avaliação estrutural que não mede comportamento). O exemplo de `init-evaluation` passa a trazer `"example": true`. Os testes cobrem também a fila, o worker, o revisor e a decisão humana, que não tinham nenhum.
 - O instalador deixou de distribuir `__pycache__` e `.pyc` das árvores gerenciadas (`managed_paths`).
