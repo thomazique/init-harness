@@ -169,16 +169,18 @@ def main() -> int:
     for arquivo in arquivos_skill:
         nome_dir = arquivo.parent.name
         texto = arquivo.read_text(encoding="utf-8", errors="replace")
+        kit = Path(".init-harness/updates/.claude/skills") / nome_dir / "SKILL.md.new"
+        dica = f" (a versão do kit está em {kit.as_posix()})" if (raiz / kit).is_file() else ""
         if not texto.startswith("---"):
-            problemas_skills.append(f"{nome_dir}: o frontmatter precisa começar na linha 1 com ---")
+            problemas_skills.append(f"{nome_dir}: o frontmatter precisa começar na linha 1 com ---{dica}")
             continue
         meta = E.parse_frontmatter(texto)
         if meta.get("name") != nome_dir:
             problemas_skills.append(
-                f"{nome_dir}: name do frontmatter ({meta.get('name') or 'ausente'}) difere do diretório"
+                f"{nome_dir}: name do frontmatter ({meta.get('name') or 'ausente'}) difere do diretório{dica}"
             )
         if not meta.get("description"):
-            problemas_skills.append(f"{nome_dir}: description ausente ou vazia no frontmatter")
+            problemas_skills.append(f"{nome_dir}: description ausente ou vazia no frontmatter{dica}")
     if problemas_skills:
         for problema in problemas_skills:
             erros.append("skill inválida: " + problema)

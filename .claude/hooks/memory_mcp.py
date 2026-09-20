@@ -254,7 +254,10 @@ def _handle(root: Path, request: dict[str, Any]) -> dict[str, Any] | None:
         result: dict[str, Any] = {
             "protocolVersion": "2025-03-26",
             "capabilities": {"tools": {"listChanged": False}},
-            "serverInfo": {"name": "init-harness-memory", "version": "2.2.0"},
+            "serverInfo": {
+                "name": "init-harness-memory",
+                "version": (L.harness(root) or {}).get("harness_version") or "desconhecida",
+            },
         }
     elif method == "tools/list":
         result = {"tools": TOOLS}

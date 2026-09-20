@@ -12,6 +12,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import uuid
 from datetime import date, datetime, timezone
 from hashlib import sha256
@@ -23,6 +24,11 @@ QUEUE_RELATIVE = Path(".init-harness") / "skills" / "queue"
 METHOD_SKILLS = {"init-harness", "spec", "pilares", "commit", "offboarding", "record", "evolve"}
 OUTCOMES = {"success", "failure", "partial", "blocked"}
 SOURCES = {"agent", "human", "test", "system"}
+# O lock só cobre a escolha do job (milissegundos): um lock antigo é resto de um worker que morreu.
+LOCK_STALE_SECONDS = 60
+# Acima de qualquer timeout de runner: um job `processing` há mais que isso perdeu o seu worker.
+PROCESSING_STALE_SECONDS = 1800
+_DROP = object()
 DEFAULT_EVALUATION_POLICY = {
     "metric": "task_success_rate",
     "higher_is_better": True,
@@ -102,6 +108,23 @@ def _job_file(root: Path, job_id: str) -> Path:
     return queue_path(root) / f"{job_id}.json"
 
 
+def _write_json_atomic(path: Path, data: dict[str, Any]) -> None:
+    """Grava por arquivo temporário e `replace`: uma queda no meio não deixa JSON truncado na fila."""
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
+    temporary.replace(path)
+
+
+def _age_seconds(timestamp: Any) -> float | None:
+    try:
+        moment = datetime.fromisoformat(str(timestamp))
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - moment).total_seconds()
+
+
 def _job_sequence(job: dict[str, Any]) -> int:
     try:
         return int(job.get("sequence") or 0)
@@ -176,8 +199,12 @@ def update_job(root: Path, job_id: str, status: str, **updates: Any) -> dict[str
     job = json.loads(path.read_text(encoding="utf-8"))
     job["status"] = status
     job["updated_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    job.update(updates)
-    path.write_text(json.dumps(job, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    for key, value in updates.items():
+        if value is _DROP:
+            job.pop(key, None)
+        else:
+            job[key] = value
+    _write_json_atomic(path, job)
     return job
 
 
@@ -188,8 +215,19 @@ def claim_next_job(root: Path) -> dict[str, Any] | None:
     try:
         handle = lock.open("x", encoding="utf-8")
     except FileExistsError:
-        return None
+        try:
+            stale = time.time() - lock.stat().st_mtime > LOCK_STALE_SECONDS
+        except FileNotFoundError:
+            stale = True
+        if not stale:
+            return None
+        lock.unlink(missing_ok=True)
+        try:
+            handle = lock.open("x", encoding="utf-8")
+        except FileExistsError:
+            return None
     try:
+        recover_stale_jobs(root)
         jobs = read_jobs(root, "queued")
         if not jobs:
             return None
@@ -197,6 +235,51 @@ def claim_next_job(root: Path) -> dict[str, Any] | None:
     finally:
         handle.close()
         lock.unlink(missing_ok=True)
+
+
+def recover_stale_jobs(root: Path, older_than: float = PROCESSING_STALE_SECONDS) -> list[str]:
+    """Marca como failed o job `processing` há mais de `older_than` segundos: o worker que o pegou morreu."""
+    recovered: list[str] = []
+    for job in read_jobs(root, "processing"):
+        age = _age_seconds(job.get("updated_at"))
+        if age is not None and age > older_than:
+            update_job(
+                root,
+                job["job_id"],
+                "failed",
+                error=f"interrompido: em processing há mais de {int(older_than)}s sem resultado (worker encerrado?)",
+                recovered=True,
+            )
+            recovered.append(job["job_id"])
+    return recovered
+
+
+def retry_jobs(root: Path, job_id: str | None = None) -> list[dict[str, Any]]:
+    """Devolve job(s) failed à fila. Quem já tinha análise falhou na revisão e volta para ela."""
+    failed = read_jobs(root, "failed")
+    if job_id is not None:
+        failed = [job for job in failed if job.get("job_id") == job_id]
+        if not failed:
+            current = next((job for job in read_jobs(root) if job.get("job_id") == job_id), None)
+            if current is None:
+                raise ValueError(f"job não encontrado: {job_id}")
+            raise ValueError(f"só job failed pode ser reprocessado; {job_id} está {current.get('status')}")
+    retried = []
+    for job in failed:
+        analysis = job.get("analysis")
+        reviewing = isinstance(analysis, dict) and analysis.get("needs_review") is True
+        retried.append(
+            update_job(
+                root,
+                job["job_id"],
+                "review_required" if reviewing else "queued",
+                retries=int(job.get("retries") or 0) + 1,
+                last_error=job.get("error"),
+                error=_DROP,
+                recovered=_DROP,
+            )
+        )
+    return retried
 
 
 def decide_job(root: Path, job_id: str, decision: str, note: str, owner: str | None = None) -> dict[str, Any]:
@@ -1451,7 +1534,8 @@ def configure_usage(root: Path, skill: str, args: argparse.Namespace) -> dict[st
     }
     if not registry_path(root).is_file():
         sync_registry(root)
-    _update_registry_skill(root, skill, {"usage_contract": contract})
+    # O risco do contrato é declarado por um humano: vale também para o manifesto, que antes divergia dele.
+    _update_registry_skill(root, skill, {"usage_contract": contract, "risk": args.risk})
     return contract
 
 
@@ -1623,6 +1707,11 @@ def parser() -> argparse.ArgumentParser:
     review_job.add_argument("--decision", choices=("approved", "rejected"), required=True)
     review_job.add_argument("--note", required=True)
     review_job.add_argument("--owner", default=None, help="Responsável pela proposta aberta ao aprovar.")
+    retry = commands.add_parser("retry-job", help="Devolve job(s) failed à fila.")
+    retry.add_argument("job_id", nargs="?", default=None)
+    retry.add_argument("--all", action="store_true", help="Reprocessa todos os jobs failed.")
+    recover = commands.add_parser("recover-jobs", help="Marca como failed o job processing sem worker.")
+    recover.add_argument("--older-than", type=float, default=PROCESSING_STALE_SECONDS, help="Segundos parado.")
     commands.add_parser("status", help="Mostra o painel compacto da evolução.")
     return root
 
@@ -1753,6 +1842,14 @@ def main(argv: list[str] | None = None) -> int:
                 decide_job(root, args.job_id, args.decision, args.note, args.owner), ensure_ascii=False, indent=2
             )
         )
+        return 0
+    if args.command == "retry-job":
+        if bool(args.job_id) == bool(args.all):
+            raise SystemExit("informe um job_id ou --all")
+        print(json.dumps(retry_jobs(root, args.job_id), ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "recover-jobs":
+        print(json.dumps({"recovered": recover_stale_jobs(root, args.older_than)}, ensure_ascii=False, indent=2))
         return 0
     if args.command == "status":
         print(json.dumps(evolution_status(root), ensure_ascii=False, indent=2))

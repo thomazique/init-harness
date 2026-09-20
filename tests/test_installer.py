@@ -60,7 +60,7 @@ class InstallerTest(unittest.TestCase):
             self.assertTrue((target / "AGENTS.md").is_file())
             self.assertTrue((target / "INIT-HARNESS.md").is_file())
             config = json.loads((target / ".init-harness/config.json").read_text(encoding="utf-8"))
-            self.assertEqual("3.0.0", config["harness_version"])
+            self.assertEqual(init_harness.VERSION, config["harness_version"])
             self.assertFalse(config["memoria"]["mcp"])
             self.assertFalse(config["bootstrap"]["opt_in"])
             self.assertEqual("continuar", config["autonomia"]["tarefas_seguras"])
@@ -149,6 +149,22 @@ class InstallerTest(unittest.TestCase):
             self.assertIn(".claude/skills/evolve/runners/static_eval.py", paths)
             self.assertFalse([path for path in paths if "__pycache__" in path or path.endswith(".pyc")])
 
+    def test_doctor_aponta_a_versao_do_kit_quando_a_skill_local_esta_quebrada(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+
+            def divergir(target: Path) -> None:
+                skill = target / ".claude/skills/spec/SKILL.md"
+                skill.write_bytes(b"\n" + skill.read_bytes())
+                kit = target / ".init-harness/updates/.claude/skills/spec/SKILL.md.new"
+                kit.parent.mkdir(parents=True)
+                kit.write_text("---\nname: spec\ndescription: x\n---\n", encoding="utf-8")
+
+            doctor = self._install_and_doctor(Path(tmp) / "projeto", divergir)
+
+            self.assertEqual(1, doctor.returncode, doctor.stdout)
+            self.assertIn("skill inválida: spec", doctor.stdout)
+            self.assertIn(".init-harness/updates/.claude/skills/spec/SKILL.md.new", doctor.stdout)
+
     def test_upgrade_migra_nomes_legados(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "legado"
@@ -172,7 +188,7 @@ class InstallerTest(unittest.TestCase):
             self.assertFalse((target / ".claude/harness.json").exists())
             self.assertTrue((target / "INIT-HARNESS.md").is_file())
             config = json.loads((target / ".init-harness/config.json").read_text(encoding="utf-8"))
-            self.assertEqual("3.0.0", config["harness_version"])
+            self.assertEqual(init_harness.VERSION, config["harness_version"])
             self.assertEqual(["claude", "codex"], config["providers"])
             claude = (target / "CLAUDE.md").read_text(encoding="utf-8")
             self.assertIn("INIT-HARNESS.md", claude)

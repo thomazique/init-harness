@@ -18,7 +18,7 @@
   ],
   "properties": {
     "$schema": {"type": "string"},
-    "harness_version": {"const": "2.3.0"},
+    "harness_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
     "modo": {"enum": ["proprio", "cliente"]},
     "instalado_em": {"type": "string", "format": "date"},
     "providers": {

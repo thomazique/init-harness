@@ -1,6 +1,6 @@
 # INIT-HARNESS.md
 
-> **harness_version: 3.0.0**
+> **harness_version: 3.1.0**
 > Protocolo de operação genérico, válido para qualquer projeto. O que o projeto **é** fica em `CLAUDE.md` e `docs/ai/`. Aqui fica **como** operar. Este arquivo não é editado por projeto.
 
 ---
@@ -40,7 +40,7 @@
 
 ```json
 {
-  "harness_version": "3.0.0",
+  "harness_version": "3.1.0",
   "modo": "proprio",
   "instalado_em": "AAAA-MM-DD",
   "providers": ["claude", "codex"],
@@ -463,6 +463,9 @@ python .claude/hooks/skill_evolution.py jobs --status queued
 python .claude/hooks/skill_worker.py --runner .claude/skills/evolve/runners/worker_static.py --once
 python .claude/hooks/skill_reviewer.py --runner .claude/skills/evolve/runners/reviewer_claude.py --once
 python .claude/hooks/skill_evolution.py review-job <J-ID> --decision approved --note "revisado"
+python .claude/hooks/skill_evolution.py retry-job <J-ID>
+python .claude/hooks/skill_evolution.py retry-job --all
+python .claude/hooks/skill_evolution.py recover-jobs --older-than 1800
 python .claude/hooks/skill_evolution.py status
 ```
 
@@ -517,20 +520,20 @@ O `doctor.py` reprova a instalação se esse hook não estiver registrado ou se 
 
 Cada experiência registrada também cria um job `skill_experience_analysis` em
 `.init-harness/skills/queue/`. A fila é idempotente e persistente; hooks apenas
-registram o job, sem chamar modelos ou bloquear a sessão. O worker econômico será
-responsável por consumir esses jobs em background.
+registram o job, sem chamar modelos ou bloquear a sessão. O worker econômico consome
+esses jobs em background.
 
 O runner econômico recebe `--job`, `--output` e `--root`. Deve ler o job, produzir
 um objeto JSON de análise e indicar `needs_review: true` quando a análise precisar
 do agente caro. O worker não usa shell, aplica timeout e registra falhas no próprio
-job. A revisão cara será uma etapa separada e nunca é executada pelo hook.
+job. A revisão cara é uma etapa separada e nunca é executada pelo hook.
 
 Ciclo de um job (`status` mostra a contagem de cada estado):
 
 | Status | Significa | Depois |
 |---|---|---|
 | `queued` | Experiência registrada, aguardando o worker | `processing` |
-| `processing` | Um runner está trabalhando nele | resultado do runner |
+| `processing` | Um runner está trabalhando nele | resultado do runner; parado há mais de 30 min vira `failed` |
 | `analyzed` | O worker concluiu que não exige julgamento | encerrado |
 | `review_required` | O worker pede o revisor caro | `processing` |
 | `review_approved` | O revisor considera que a evidência sustenta uma proposta | decisão humana |
@@ -538,7 +541,15 @@ Ciclo de um job (`status` mostra a contagem de cada estado):
 | `rejected` | Descartado pelo revisor ou pelo humano | encerrado |
 | `approved` | O humano aprovou; a proposta já foi aberta (`proposal_id`, `suggestion_id`) | `promoted` |
 | `promoted` | A proposta vinculada foi promovida (`promoted_version`) | encerrado |
-| `failed` | Runner com erro, timeout ou saída inválida (`error`) | sem reenfileiramento automático |
+| `failed` | Runner com erro, timeout, saída inválida ou worker encerrado (`error`) | `retry-job` |
+
+`retry-job <job_id>` (ou `--all`) devolve um job `failed` à fila: para `review_required` se o worker já
+o havia analisado (falhou na revisão) e para `queued` se não. O erro anterior fica em `last_error` e
+`retries` conta as tentativas. Um job `processing` sem atualização há mais de 30 minutos perdeu o
+worker (encerrado à força, queda de energia): `recover-jobs [--older-than <segundos>]` o marca `failed`, e o
+worker e o revisor fazem isso sozinhos antes de pegar o próximo job. Um `.worker.lock` com mais de
+60 segundos é resto de um worker morto (o lock só cobre a escolha do job) e é ignorado. Os arquivos de job
+são gravados por arquivo temporário e `replace`, então uma queda não deixa JSON truncado na fila.
 
 `review-job --decision approved --note "..." [--owner <quem>]` só vale para `review_approved`
 ou `human_required`. Aprovar abre uma proposta em rascunho: reusa a sugestão aberta que contém
