@@ -1086,6 +1086,9 @@ def accept_proposal(root: Path, skill: str, proposal_id: str) -> dict[str, Any]:
         proposal["status"] = "conflict"
         _save_proposal(path, proposal)
         raise ValueError("skill ativa mudou desde a avaliação; promoção cancelada")
+    candidate_hash = sha256(candidate.read_text(encoding="utf-8", errors="replace").encode("utf-8")).hexdigest()
+    if candidate_hash != evaluation.get("candidate_sha256"):
+        raise ValueError("candidata mudou depois da avaliação; avalie novamente antes de promover")
     active.write_text(candidate.read_text(encoding="utf-8"), encoding="utf-8")
     registry = load_registry(root)
     current_version = next(

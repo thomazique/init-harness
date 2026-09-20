@@ -302,6 +302,32 @@ class SkillEvolutionTest(unittest.TestCase):
             self.assertIn("Use a tabela correta.", skill_file.read_text(encoding="utf-8"))
             self.assertTrue((root / ".init-harness/skills/billing/history/version-002.json").is_file())
 
+    def test_promocao_recusa_candidata_alterada_depois_da_avaliacao(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._project_with_skills(root, "billing")
+            skill_file = root / ".claude" / "skills" / "billing" / "SKILL.md"
+            for task in ("billing-001", "billing-002"):
+                skill_evolution.record_experience(
+                    root,
+                    skill_evolution.parser().parse_args(
+                        ["--root", str(root), "record", "billing", "--task-id", task, "--outcome", "failure",
+                         "--summary", "Fonte errada.", "--failure-type", "wrong-source"]
+                    ),
+                )
+            suggestion = skill_evolution.read_suggestions(root, "billing")[0]
+            proposal = skill_evolution.create_proposal(root, "billing", suggestion["suggestion_id"])
+            candidate = root / proposal["candidate_path"]
+            candidate.write_text("---\nname: billing\ndescription: billing\n---\n# avaliada\n", encoding="utf-8")
+            skill_evolution.evaluate_proposal(root, "billing", proposal["proposal_id"], 0.5, 0.9)
+            original = skill_file.read_text(encoding="utf-8")
+
+            candidate.write_text("---\nname: billing\ndescription: billing\n---\n# nunca avaliada\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "candidata mudou depois da avaliação"):
+                skill_evolution.accept_proposal(root, "billing", proposal["proposal_id"])
+
+            self.assertEqual(original, skill_file.read_text(encoding="utf-8"))
+
     def test_politica_de_avaliacao_e_contextual_e_aplicada_na_proposta(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
