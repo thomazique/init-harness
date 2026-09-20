@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import io
 import json
@@ -757,6 +758,129 @@ class SkillEvolutionTest(unittest.TestCase):
 
             self.assertEqual([job["job_id"] for job in created], [job["job_id"] for job in queued])
             self.assertEqual(created[0]["job_id"], claimed["job_id"])
+
+    def _record(self, root: Path, task: str, failure_type: str | None = "wrong-source", *extra: str) -> dict:
+        argv = ["--root", str(root), "record", "billing", "--task-id", task, "--outcome", "failure",
+                "--summary", f"falha {task}", *extra]
+        if failure_type:
+            argv += ["--failure-type", failure_type]
+        return skill_evolution.record_experience(root, skill_evolution.parser().parse_args(argv))
+
+    def test_sugestao_aberta_acumula_ocorrencias_sem_duplicar(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._project_with_skills(root, "billing")
+            self._record(root, "t1")
+            self.assertEqual([], skill_evolution.read_suggestions(root, "billing"), "uma falha isolada não sugere nada")
+            self._record(root, "t2")
+            first = skill_evolution.read_suggestions(root, "billing")[0]
+
+            for task in ("t3", "t4"):
+                self._record(root, task)
+
+            rows = skill_evolution.read_suggestions(root, "billing")
+            self.assertEqual(1, len(rows))
+            self.assertEqual(first["suggestion_id"], rows[0]["suggestion_id"])
+            self.assertEqual(4, rows[0]["occurrences"])
+            self.assertEqual(4, len(rows[0]["evidence_event_ids"]))
+            self.assertEqual(first["evidence_event_ids"], rows[0]["evidence_event_ids"][:2], "evidência só cresce")
+            self.assertIn("4 experiência", rows[0]["rationale"])
+            self.assertEqual(["falha t2", "falha t3", "falha t4"], rows[0]["summaries"][-3:])
+            self.assertGreaterEqual(rows[0]["updated_at"], rows[0]["created_at"])
+
+    def test_correcoes_humanas_sem_tipo_acumulam_na_mesma_sugestao(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._project_with_skills(root, "billing")
+
+            self._record(root, "t1", None, "--human-correction")
+            self._record(root, "t2", None, "--human-correction")
+
+            rows = skill_evolution.read_suggestions(root, "billing")
+            self.assertEqual(1, len(rows))
+            self.assertEqual("correction:unspecified", rows[0]["pattern"])
+            self.assertEqual(2, rows[0]["occurrences"])
+            self.assertIn("correção humana", rows[0]["rationale"])
+
+    def test_sugestao_gravada_no_formato_antigo_tambem_e_atualizada(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._project_with_skills(root, "billing")
+            self._record(root, "t1")
+            self._record(root, "t2")
+            path = skill_evolution.suggestions_path(root, "billing")
+            legacy = json.loads(path.read_text(encoding="utf-8"))
+            legacy.pop("updated_at")
+            path.write_text(json.dumps(legacy) + "\n", encoding="utf-8")
+
+            self._record(root, "t3")
+
+            updated = skill_evolution.read_suggestions(root, "billing")[0]
+            self.assertEqual(3, updated["occurrences"])
+            self.assertIn("updated_at", updated)
+
+    def test_sugestao_promovida_congela_e_so_reabre_com_ocorrencias_posteriores(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proposal = self._proposal(root)
+            old_id = proposal["suggestion_id"]
+            self.assertEqual("in_progress", skill_evolution.read_suggestions(root, "billing")[0]["status"])
+            self._write_candidate(root, proposal, "# v2")
+            skill_evolution.submit_candidate(root, "billing", proposal["proposal_id"], "v2")
+            skill_evolution.evaluate_proposal(root, "billing", proposal["proposal_id"], 0.5, 0.9)
+            skill_evolution.accept_proposal(root, "billing", proposal["proposal_id"])
+            frozen = skill_evolution.read_suggestions(root, "billing")[0]
+            self.assertEqual(("addressed", proposal["proposal_id"]), (frozen["status"], frozen["addressed_by"]))
+
+            self._record(root, "t3")
+            self.assertEqual(1, len(skill_evolution.read_suggestions(root, "billing")), "uma ocorrência não reabre")
+            self._record(root, "t4")
+
+            rows = skill_evolution.read_suggestions(root, "billing")
+            self.assertEqual(2, len(rows))
+            self.assertEqual(frozen, rows[0], "a sugestão promovida não muda mais")
+            reopened = rows[1]
+            self.assertNotEqual(old_id, reopened["suggestion_id"])
+            self.assertEqual("proposed", reopened["status"])
+            self.assertEqual(2, reopened["occurrences"])
+            self.assertFalse(set(reopened["evidence_event_ids"]) & set(frozen["evidence_event_ids"]))
+
+            self._record(root, "t5")
+            self.assertEqual(3, skill_evolution.read_suggestions(root, "billing")[1]["occurrences"])
+            self._record(root, "t6", "outro-tipo", "--human-correction")
+            self.assertEqual(3, len(skill_evolution.read_suggestions(root, "billing")), "correção humana abre na hora")
+
+    def test_criar_proposta_marca_sugestao_em_andamento_uma_vez(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proposal = self._proposal(root)
+            self._record(root, "t3")
+
+            self.assertEqual(proposal, skill_evolution.create_proposal(root, "billing", proposal["suggestion_id"]))
+            row = skill_evolution.read_suggestions(root, "billing")[0]
+
+            self.assertEqual("in_progress", row["status"])
+            self.assertEqual(3, row["occurrences"], "sugestão em andamento continua acumulando")
+
+    def test_cli_record_informa_sugestoes_novas_e_atualizadas(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._project_with_skills(root, "billing")
+
+            def run(task: str) -> dict:
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    skill_evolution.main(
+                        ["--root", str(root), "record", "billing", "--task-id", task, "--outcome", "failure",
+                         "--summary", "x", "--failure-type", "wrong-source"]
+                    )
+                return json.loads(out.getvalue())
+
+            self.assertEqual(([], []), (run("t1")["new_suggestions"], run("t2")["updated_suggestions"]))
+            third = run("t3")
+            self.assertEqual([], third["new_suggestions"])
+            self.assertEqual([{"suggestion_id": skill_evolution.read_suggestions(root, "billing")[0]["suggestion_id"],
+                               "occurrences": 3}], third["updated_suggestions"])
 
 
 if __name__ == "__main__":

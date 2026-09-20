@@ -618,60 +618,137 @@ def read_proposals(root: Path, skill: str) -> list[dict[str, Any]]:
     return rows
 
 
+def _suggestion_key(event: dict[str, Any]) -> str:
+    failure_type = str(event.get("failure_type") or "").strip().lower()
+    tags = ",".join(event.get("tags") or [])
+    return f"failure_type:{failure_type}" if failure_type else f"correction:{tags or 'unspecified'}"
+
+
 def _suggestion_groups(experiences: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     groups: dict[str, list[dict[str, Any]]] = {}
     for event in experiences:
         if event.get("outcome") not in {"failure", "partial", "blocked"} and not event.get("human_correction"):
             continue
-        failure_type = str(event.get("failure_type") or "").strip().lower()
-        tags = ",".join(event.get("tags") or [])
-        key = f"failure_type:{failure_type}" if failure_type else f"correction:{tags or 'unspecified'}"
-        groups.setdefault(key, []).append(event)
+        groups.setdefault(_suggestion_key(event), []).append(event)
     return groups
 
 
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _write_suggestions(root: Path, skill: str, rows: list[dict[str, Any]]) -> None:
+    """Reescreve o arquivo por inteiro: as sugestões são atualizadas no lugar."""
+    path = suggestions_path(root, skill)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(
+        "".join(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n" for row in rows),
+        encoding="utf-8",
+        newline="\n",
+    )
+    temporary.replace(path)
+
+
+def _suggestion_rationale(pattern: str, count: int, human_correction: bool) -> str:
+    return (
+        f"O padrão {pattern.split(':', 1)[1]!r} apareceu em {count} experiência(s)"
+        + (" e houve correção humana." if human_correction else ".")
+    )
+
+
+def _build_suggestion(
+    skill: str, pattern: str, events: list[dict[str, Any]], generation: int, origin: str | None = None
+) -> dict[str, Any]:
+    seed = f"{skill}\0{pattern}" if generation == 0 else f"{skill}\0{pattern}\0g{generation}"
+    fingerprint = sha256(seed.encode("utf-8")).hexdigest()[:16]
+    now = _now()
+    suggestion = {
+        "suggestion_id": "S-" + fingerprint[:12],
+        "fingerprint": fingerprint,
+        "skill": skill,
+        "status": "proposed",
+        "created_at": now,
+        "updated_at": now,
+        "pattern": pattern,
+        "occurrences": len(events),
+        "evidence_event_ids": [event["event_id"] for event in events],
+        "summaries": [event["summary"] for event in events[-5:]],
+        "rationale": _suggestion_rationale(pattern, len(events), any(e.get("human_correction") for e in events)),
+        "proposed_action": (
+            "Revisar a skill para tratar esse padrão e criar um caso de regressão "
+            "antes de propor uma nova versão."
+        ),
+    }
+    if origin:
+        suggestion["origin"] = origin
+    return suggestion
+
+
+def _refresh_suggestion(
+    suggestion: dict[str, Any], events: list[dict[str, Any]], by_id: dict[str, dict[str, Any]]
+) -> bool:
+    """Acrescenta ocorrências novas a uma sugestão aberta; nunca remove evidência."""
+    ids = list(suggestion.get("evidence_event_ids", []))
+    new = [event["event_id"] for event in events if event["event_id"] not in ids]
+    if not new:
+        return False
+    ids.extend(new)
+    known = [by_id[item] for item in ids if item in by_id]
+    suggestion["evidence_event_ids"] = ids
+    suggestion["occurrences"] = len(ids)
+    suggestion["summaries"] = [event["summary"] for event in known[-5:]]
+    suggestion["rationale"] = _suggestion_rationale(
+        suggestion["pattern"], len(ids), any(event.get("human_correction") for event in known)
+    )
+    suggestion["updated_at"] = _now()
+    return True
+
+
 def identify_suggestions(root: Path, skill: str) -> list[dict[str, Any]]:
-    """Cria sugestões determinísticas a partir de padrões observados.
+    """Cria e mantém sugestões determinísticas a partir de padrões observados.
 
     O limiar evita transformar uma falha isolada em mudança de skill, mas uma
     correção humana explícita já é suficiente para sinalizar um padrão a revisar.
+    Uma sugestão aberta (proposed ou in_progress) acumula as ocorrências novas. Depois
+    que uma proposta a promove (addressed), a sugestão fica congelada como histórico e só
+    as ocorrências posteriores podem abrir outra: é o sinal de que a correção não resolveu.
     """
     experiences = read_experiences(root, skill)
-    existing = read_suggestions(root, skill)
-    known = {item.get("fingerprint") for item in existing}
+    by_id = {event["event_id"]: event for event in experiences if event.get("event_id")}
+    rows = read_suggestions(root, skill)
     created: list[dict[str, Any]] = []
+    changed = False
     for pattern, events in _suggestion_groups(experiences).items():
-        human_correction = any(event.get("human_correction") for event in events)
-        if len(events) < 2 and not human_correction:
-            continue
-        fingerprint = sha256(f"{skill}\0{pattern}".encode("utf-8")).hexdigest()[:16]
-        if fingerprint in known:
-            continue
-        failure_type = pattern.split(":", 1)[1]
-        suggestion = {
-            "suggestion_id": "S-" + fingerprint[:12],
-            "fingerprint": fingerprint,
-            "skill": skill,
-            "status": "proposed",
-            "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "pattern": pattern,
-            "occurrences": len(events),
-            "evidence_event_ids": [event["event_id"] for event in events],
-            "summaries": [event["summary"] for event in events[-5:]],
-            "rationale": (
-                f"O padrão {failure_type!r} apareceu em {len(events)} experiência(s)"
-                + (" e houve correção humana." if human_correction else ".")
-            ),
-            "proposed_action": (
-                "Revisar a skill para tratar esse padrão e criar um caso de regressão "
-                "antes de propor uma nova versão."
-            ),
+        versions = [row for row in rows if row.get("pattern") == pattern]
+        consumed = {
+            item for row in versions if row.get("status") == "addressed" for item in row.get("evidence_event_ids", [])
         }
-        with suggestions_path(root, skill).open("a", encoding="utf-8", newline="\n") as handle:
-            handle.write(json.dumps(suggestion, ensure_ascii=False, separators=(",", ":")) + "\n")
-        known.add(fingerprint)
+        pending = [event for event in events if event["event_id"] not in consumed]
+        if versions and versions[-1].get("status") != "addressed":
+            changed = _refresh_suggestion(versions[-1], pending, by_id) or changed
+            continue
+        if len(pending) < 2 and not any(event.get("human_correction") for event in pending):
+            continue
+        suggestion = _build_suggestion(skill, pattern, pending, generation=len(versions))
+        rows.append(suggestion)
         created.append(suggestion)
+        changed = True
+    if changed:
+        _write_suggestions(root, skill, rows)
     return created
+
+
+def _set_suggestion_status(root: Path, skill: str, suggestion_id: str | None, status: str, **extra: Any) -> None:
+    rows = read_suggestions(root, skill)
+    for row in rows:
+        if row.get("suggestion_id") != suggestion_id:
+            continue
+        if status == "in_progress" and row.get("status") != "proposed":
+            return
+        row.update(status=status, updated_at=_now(), **extra)
+        _write_suggestions(root, skill, rows)
+        return
 
 
 def create_proposal(root: Path, skill: str, suggestion_id: str, owner: str | None = None) -> dict[str, Any]:
@@ -755,6 +832,7 @@ def create_proposal(root: Path, skill: str, suggestion_id: str, owner: str | Non
         ),
         encoding="utf-8",
     )
+    _set_suggestion_status(root, skill, suggestion_id, "in_progress")
     sync_registry(root)
     return proposal
 
@@ -1191,6 +1269,10 @@ def accept_proposal(root: Path, skill: str, proposal_id: str) -> dict[str, Any]:
     proposal["promoted_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     proposal["promoted_version"] = new_version
     _save_proposal(path, proposal)
+    _set_suggestion_status(
+        root, skill, proposal.get("suggestion_id"), "addressed",
+        addressed_by=proposal_id, addressed_at=proposal["promoted_at"],
+    )
     _update_registry_skill(
         root,
         skill,
@@ -1448,10 +1530,22 @@ def main(argv: list[str] | None = None) -> int:
         print(format_listing(root, sync=True))
         return 0
     if args.command == "record":
-        before = {item["suggestion_id"] for item in read_suggestions(root, args.skill)}
+        before = {item["suggestion_id"]: item.get("occurrences") for item in read_suggestions(root, args.skill)}
         event = record_experience(root, args)
-        after = [item for item in read_suggestions(root, args.skill) if item["suggestion_id"] not in before]
-        print(json.dumps({"experience": event, "new_suggestions": after}, ensure_ascii=False, indent=2))
+        rows = read_suggestions(root, args.skill)
+        after = [item for item in rows if item["suggestion_id"] not in before]
+        updated = [
+            {"suggestion_id": item["suggestion_id"], "occurrences": item["occurrences"]}
+            for item in rows
+            if item["suggestion_id"] in before and item.get("occurrences") != before[item["suggestion_id"]]
+        ]
+        print(
+            json.dumps(
+                {"experience": event, "new_suggestions": after, "updated_suggestions": updated},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return 0
     if args.command == "experiences":
         print(json.dumps(read_experiences(root, args.skill, args.limit), ensure_ascii=False, indent=2))

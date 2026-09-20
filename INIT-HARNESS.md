@@ -531,6 +531,16 @@ ou uma correção humana explícita — o harness cria uma sugestão em
 que a sustentam. Sugestões são somente propostas: não alteram, promovem ou fazem
 rollback de skills.
 
+Uma sugestão é viva enquanto está aberta. Cada nova ocorrência do padrão atualiza
+`occurrences`, `evidence_event_ids`, `summaries` e `rationale` no lugar (`updated_at`
+registra quando); a evidência só cresce. O status acompanha o ciclo: `proposed` (aberta),
+`in_progress` (já existe proposta, que segue acumulando evidência na sugestão) e `addressed`
+(a proposta foi promovida; `addressed_by` e `addressed_at` registram qual). Uma sugestão
+`addressed` fica congelada como histórico. Só ocorrências posteriores à promoção podem abrir
+outra, com o limiar de sempre (duas ocorrências ou uma correção humana): é o sinal de que a
+correção não resolveu. Correções humanas sem `failure_type` nem tag acumulam em uma única
+sugestão `correction:unspecified`.
+
 Uma sugestão pode ser materializada como proposta com `propose`. Isso cria um
 diretório versionável em `.init-harness/skills/<skill>/proposals/`, contendo o
 manifesto JSON, o hash da skill ativa, as evidências vinculadas e um checklist de
