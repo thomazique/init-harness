@@ -520,13 +520,13 @@ O `doctor.py` reprova a instalação se esse hook não estiver registrado ou se 
 
 Cada experiência registrada também cria um job `skill_experience_analysis` em
 `.init-harness/skills/queue/`. A fila é idempotente e persistente; hooks apenas
-registram o job, sem chamar modelos ou bloquear a sessão. O worker econômico será
-responsável por consumir esses jobs em background.
+registram o job, sem chamar modelos ou bloquear a sessão. O worker econômico consome
+esses jobs em background.
 
 O runner econômico recebe `--job`, `--output` e `--root`. Deve ler o job, produzir
 um objeto JSON de análise e indicar `needs_review: true` quando a análise precisar
 do agente caro. O worker não usa shell, aplica timeout e registra falhas no próprio
-job. A revisão cara será uma etapa separada e nunca é executada pelo hook.
+job. A revisão cara é uma etapa separada e nunca é executada pelo hook.
 
 Ciclo de um job (`status` mostra a contagem de cada estado):
 

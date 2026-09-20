@@ -1,9 +1,11 @@
 # init-harness 3.0.0
 
 Inicializa repositórios Git para trabalho contínuo com agentes de IA. A versão
-3.0 adiciona um ciclo controlado de aprendizado de skills: o projeto coleta
-experiências, processa sugestões em background com um agente econômico e envia
-somente análises que exigem julgamento para um revisor caro antes da aprovação.
+3.0 introduziu um ciclo controlado de aprendizado de skills e a 3.1 o fecha: a skill
+usada na sessão é ativada sozinha, o projeto coleta experiências, um agente econômico
+faz a triagem em background, um revisor caro só vê o que exige julgamento, a aprovação
+humana abre uma proposta, a skill `evolve` escreve a candidata e a promoção só acontece
+depois de uma avaliação e de uma decisão humana explícita.
 
 > Estado: projeto em evolução. O harness ajuda a estruturar trabalho com IA,
 > mas não substitui revisão humana, sandbox, CI, backups ou controles de acesso.
@@ -84,17 +86,20 @@ e recebem somente migrações de referências conhecidas.
 
 ## Evolução assíncrona de skills
 
-O fluxo da versão 3.0 é:
+O fluxo de evolução (introduzido na 3.0, completo na 3.1) é:
 
 ```text
-uso da skill
+uso da skill (ativada automaticamente na sessão)
   → experiência observada
+  → sugestão (acumula ocorrências enquanto aberta)
   → fila persistente
-  → worker econômico
-  → análise preliminar
+  → worker econômico (triagem)
   → revisor caro
-  → aprovação humana
-  → avaliação e promoção versionada
+  → aprovação humana (review-job)
+  → proposta
+  → candidata escrita pela skill evolve
+  → avaliação
+  → promoção por decisão humana (accept)
 ```
 
 Os hooks não chamam modelos nem bloqueiam a sessão. O kit traz runners de referência em
@@ -109,7 +114,8 @@ python .claude/hooks/skill_evolution.py status
 
 O worker econômico pode propor análises, mas não promove skills. O revisor caro valida
 as evidências, e a promoção continua dependendo de uma decisão humana explícita.
-Experiências não capturam prompts, credenciais ou raciocínio privado.
+Experiências não capturam prompts, credenciais ou raciocínio privado. Um job que falhou
+volta à fila com `retry-job`, e o job de um worker encerrado à força é recuperado sozinho.
 
 A candidata de uma proposta é escrita pela skill `/evolve`: ela lê a evidência
 (`proposal-context`), edita somente a cópia candidata, registra o resumo
