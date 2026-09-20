@@ -2,6 +2,8 @@
 
 ## Não lançado
 
+- Adicionados runners de referência em `.claude/skills/evolve/runners/`: `worker_static.py` (triagem determinística), `reviewer_claude.py` (revisor via `claude -p`, opt-in) e `static_eval.py` (avaliação estrutural que não mede comportamento). O exemplo de `init-evaluation` passa a trazer `"example": true`. Os testes cobrem também a fila, o worker, o revisor e a decisão humana, que não tinham nenhum.
+- O instalador deixou de distribuir `__pycache__` e `.pyc` das árvores gerenciadas (`managed_paths`).
 - Corrigida a fila de evolução: os jobs eram processados em ordem aleatória (ordenados pelo UUID do arquivo) e passam a seguir a ordem de criação.
 - Adicionada a skill `evolve` e os comandos `proposal-context` e `submit-candidate`, que fecham o passo entre `propose` e `evaluate`: um agente lê a evidência, escreve a candidata, registra o resumo e leva a proposta até a avaliação, sem promover a skill. Testes cobrem o contexto, a validação da candidata e o registro das skills de método no instalador.
 - Corrigida a promoção de propostas: `accept` agora recusa uma candidata alterada depois da avaliação, que antes podia virar a skill ativa sem ter sido avaliada.

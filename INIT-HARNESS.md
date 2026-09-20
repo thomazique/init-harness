@@ -453,15 +453,15 @@ python .claude/hooks/skill_evolution.py configure-evaluation <skill> --metric co
 python .claude/hooks/skill_evolution.py configure-usage <skill> --when "..." --expected-outcome "..."
 python .claude/hooks/skill_evolution.py init-evaluation <skill>
 python .claude/hooks/skill_evolution.py validate-cases <skill>
-python .claude/hooks/skill_evolution.py run-evaluation <skill> --proposal <P-ID> --runner eval/runner.py
+python .claude/hooks/skill_evolution.py run-evaluation <skill> --proposal <P-ID> --runner .claude/skills/evolve/runners/static_eval.py
 echo '{"skill_experience":{"skill":"<skill>","task_id":"<id>","outcome":"success","summary":"fato observado"}}' |
   python .claude/hooks/skill_evolution.py capture-hook
 python .claude/hooks/skill_evolution.py activate <skill> --session-id <id>
 python .claude/hooks/skill_evolution.py active --session-id <id>
 python .claude/hooks/skill_evolution.py deactivate --session-id <id>
 python .claude/hooks/skill_evolution.py jobs --status queued
-python .claude/hooks/skill_worker.py --runner eval/cheap_worker.py --once
-python .claude/hooks/skill_reviewer.py --runner eval/expensive_reviewer.py --once
+python .claude/hooks/skill_worker.py --runner .claude/skills/evolve/runners/worker_static.py --once
+python .claude/hooks/skill_reviewer.py --runner .claude/skills/evolve/runners/reviewer_claude.py --once
 python .claude/hooks/skill_evolution.py review-job <J-ID> --decision approved --note "revisado"
 python .claude/hooks/skill_evolution.py status
 ```
@@ -575,3 +575,22 @@ caso informa `case_id`, `baseline_score`, `candidate_score`, `baseline_passed`,
 médias, regressões e falhas automaticamente e aplica a política da skill. O harness
 não executa comandos arbitrários do JSON; o runner continua sendo específico do
 projeto e deve produzir somente resultados observáveis.
+
+O kit traz três runners de referência em `.claude/skills/evolve/runners/`, instalados com a skill `evolve`.
+São ponto de partida: um projeto que precise de mais os substitui por runners próprios.
+
+| Runner | Usado por | O que faz | O que não faz |
+|---|---|---|---|
+| `worker_static.py` | `skill_worker.py` | Triagem determinística, sem modelo. Encerra sucesso sem correção e falha automática sem explicação; encaminha ao revisor correção humana, padrão recorrente e falha explicada | Não interpreta a causa da falha |
+| `reviewer_claude.py` | `skill_reviewer.py` | Chama `claude -p` sem ferramentas, com teto de custo e em diretório temporário; exige JSON `approved`/`rationale`/`risks`. Saída inválida faz o job virar `failed` | Não decide pelo humano: `approved` só leva o job à decisão de `review-job` |
+| `static_eval.py` | `run-evaluation` | Verificação **estrutural**: a candidata contém o que os casos exigem (`must_mention`, `must_not_mention`) e preserva os `guardrails` da base | **Não mede comportamento do agente.** Aprovar aqui prova que o texto mudou como o caso pede, não que a skill passou a funcionar melhor |
+
+`reviewer_claude.py` é opt-in e envia ao provedor do cliente Claude o resumo da experiência,
+a triagem e o texto da `SKILL.md`, nunca prompts, transcrições ou outros arquivos. Modelo,
+executável e teto de custo vêm de `INIT_HARNESS_REVIEWER_MODEL` (padrão `opus`),
+`INIT_HARNESS_CLAUDE_BIN` e `INIT_HARNESS_REVIEWER_BUDGET_USD` (padrão `0.50`).
+
+Casos para o `static_eval.py` usam `expected` com `must_mention`, `must_not_mention` e
+`guardrails` (comparação sem diferenciar caixa nem espaçamento). Um caso sem asserções, ou com
+guardrail ausente da base, é erro; o exemplo criado por `init-evaluation` traz `"example": true`
+e é ignorado.

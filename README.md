@@ -97,12 +97,13 @@ uso da skill
   → avaliação e promoção versionada
 ```
 
-Os hooks não chamam modelos nem bloqueiam a sessão. Cada projeto fornece os runners
-que conectam seus agentes:
+Os hooks não chamam modelos nem bloqueiam a sessão. O kit traz runners de referência em
+`.claude/skills/evolve/runners/` (triagem determinística, revisor via `claude -p` e avaliação
+estrutural); cada projeto pode substituí-los pelos seus:
 
 ```powershell
-python .claude/hooks/skill_worker.py --runner eval/cheap_worker.py --interval 30
-python .claude/hooks/skill_reviewer.py --runner eval/expensive_reviewer.py --interval 60
+python .claude/hooks/skill_worker.py --runner .claude/skills/evolve/runners/worker_static.py --interval 30
+python .claude/hooks/skill_reviewer.py --runner .claude/skills/evolve/runners/reviewer_claude.py --interval 60
 python .claude/hooks/skill_evolution.py status
 ```
 

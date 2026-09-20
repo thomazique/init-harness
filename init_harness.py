@@ -115,12 +115,21 @@ def _write_managed_baseline(target: Path, relative: str, content: bytes) -> None
     baseline.write_bytes(content)
 
 
-def copy_managed(source: Path, target: Path, reporter: Reporter) -> None:
+def managed_paths(source: Path) -> list[str]:
+    """Arquivos do kit que o instalador gerencia; bytecode gerado ao rodar runners não entra."""
     files = list(MANAGED_FILES)
     for tree in MANAGED_TREES:
         root = source / tree
-        files.extend(str(path.relative_to(source)).replace("\\", "/") for path in root.rglob("*") if path.is_file())
-    for relative in dict.fromkeys(files):
+        files.extend(
+            str(path.relative_to(source)).replace("\\", "/")
+            for path in root.rglob("*")
+            if path.is_file() and "__pycache__" not in path.parts
+        )
+    return list(dict.fromkeys(files))
+
+
+def copy_managed(source: Path, target: Path, reporter: Reporter) -> None:
+    for relative in managed_paths(source):
         src = source / relative
         dst = target / relative
         if not src.is_file():

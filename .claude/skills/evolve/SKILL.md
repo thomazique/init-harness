@@ -28,10 +28,10 @@ Comandos: `python .claude/hooks/skill_evolution.py <comando>`.
 3. **Diagnosticar.** Para cada evidência: que instrução da skill faltou, foi ambígua ou foi seguida e deu errado? Parar e dizer ao usuário, sem editar, quando:
    - `explained_evidence` é 0. Falha automática (`source: system`) só diz que houve falha, não o motivo. Pedir `/record` com o fato observado.
    - a causa é ambiente, ferramenta ou permissão, não uma instrução da skill.
-4. **Caso de regressão.** `init-evaluation <skill>` se `case_files` estiver vazio. Criar `eval/cases/<case_id>.json` que reproduz o cenário da evidência (`task`, `input`, `expected`), sem dados reais nem segredos. Depois `validate-cases <skill>`.
+4. **Caso de regressão.** `init-evaluation <skill>` se `case_files` estiver vazio. Criar `eval/cases/<case_id>.json` que reproduz o cenário da evidência (`task`, `input`, `expected`), sem dados reais nem segredos. Para o runner de referência, `expected` traz `must_mention` (a instrução que a candidata deve ter), `must_not_mention` e `guardrails` (trechos da base que não podem sumir). Depois `validate-cases <skill>`.
 5. **Escrever a candidata.** Editar `candidate_path`. O frontmatter continua na linha 1 com `name` igual ao da skill; `description` só muda se a evidência for de disparo errado.
 6. **Registrar.** `submit-candidate <skill> --proposal <P-ID> --summary "<o que mudou e por quê, ligado à evidência>"`. Erro de validação: corrigir a candidata e repetir.
-7. **Avaliar.** Com runner do projeto: `run-evaluation <skill> --proposal <P-ID> --runner <runner>`. Sem runner ou sem casos: parar e reportar "candidata pronta, avaliação pendente". `evaluate` com números só quando o humano os fornecer.
+7. **Avaliar.** `run-evaluation <skill> --proposal <P-ID> --runner .claude/skills/evolve/runners/static_eval.py` (ou o runner do projeto). O `static_eval` só verifica o texto da skill: ao reportar, dizer que a avaliação é estrutural e não mede comportamento. Sem casos com asserções: parar e reportar "candidata pronta, avaliação pendente". `evaluate` com números só quando o humano os fornecer.
 8. **Entregar.** Reportar a sugestão de origem, o que mudou, o resultado da avaliação e o comando `accept` para o usuário decidir. Resultado `rejected`: revisar a candidata (passo 5) e repetir a partir do 6, ou parar e reportar.
 
 ---

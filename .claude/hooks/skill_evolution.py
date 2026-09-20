@@ -1029,7 +1029,7 @@ def init_evaluation(root: Path, skill: str) -> Path:
     if not example.exists():
         example.write_text(
             json.dumps(
-                {"case_id": "case-001", "task": "Cenário de exemplo", "input": {}, "expected": {}, "tags": []},
+                {"case_id": "case-001", "example": True, "task": "Cenário de exemplo", "input": {}, "expected": {}, "tags": []},
                 ensure_ascii=False,
                 indent=2,
             )

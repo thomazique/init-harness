@@ -128,6 +128,19 @@ class InstallerTest(unittest.TestCase):
                 self.assertIn(f".claude/skills/{skill.name}", init_harness.MANAGED_TREES)
                 self.assertIn(f".claude/skills/{skill.name}/", lib.METODO_CLIENTE)
 
+    def test_instalador_nao_distribui_bytecode_das_arvores_gerenciadas(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp)
+            runners = source / ".claude/skills/evolve/runners"
+            (runners / "__pycache__").mkdir(parents=True)
+            (runners / "static_eval.py").write_text("", encoding="utf-8")
+            (runners / "__pycache__/static_eval.cpython-311.pyc").write_bytes(b"x")
+
+            paths = init_harness.managed_paths(source)
+
+            self.assertIn(".claude/skills/evolve/runners/static_eval.py", paths)
+            self.assertFalse([path for path in paths if "__pycache__" in path or path.endswith(".pyc")])
+
     def test_upgrade_migra_nomes_legados(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "legado"
