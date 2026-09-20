@@ -1,4 +1,3 @@
-
 ---
 name: spec
 description: Criação e ciclo de vida de spec para tarefa não trivial. Use antes de codar qualquer tarefa que toque mais de um arquivo, mude schema, contrato, rota ou permissão, tenha impacto fora do módulo ou não seja reversível. Levanta nós afetados, blast radius e riscos reais antes da primeira linha de código.

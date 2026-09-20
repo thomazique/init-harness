@@ -83,6 +83,72 @@ class InstallerTest(unittest.TestCase):
                 self.assertEqual(0, init_harness.main(args, KIT))
             self.assertIn("Resultado: 0 mudança(s)", output.getvalue())
 
+    def _install_and_doctor(self, target: Path, mutate) -> subprocess.CompletedProcess[str]:
+        git_init(target)
+        self.assertEqual(
+            0,
+            init_harness.main(["install", "--target", str(target), "--providers", "claude", "--graph", "manual"], KIT),
+        )
+        mutate(target)
+        return subprocess.run(
+            [sys.executable, str(target / ".claude/hooks/doctor.py")],
+            cwd=target,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def test_doctor_reprova_skill_com_frontmatter_quebrado(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+
+            def quebrar(target: Path) -> None:
+                skill = target / ".claude/skills/spec/SKILL.md"
+                skill.write_bytes(b"\n" + skill.read_bytes())
+
+            doctor = self._install_and_doctor(Path(tmp) / "projeto", quebrar)
+
+            self.assertEqual(1, doctor.returncode, doctor.stdout)
+            self.assertIn("skill inválida: spec", doctor.stdout)
+
+    def test_doctor_reprova_settings_sem_ativacao_de_skill(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+
+            def remover(target: Path) -> None:
+                path = target / ".claude/settings.json"
+                data = json.loads(path.read_text(encoding="utf-8"))
+                data["hooks"]["PreToolUse"] = [x for x in data["hooks"]["PreToolUse"] if x.get("matcher") != "Skill"]
+                path.write_text(json.dumps(data), encoding="utf-8")
+
+            doctor = self._install_and_doctor(Path(tmp) / "projeto", remover)
+
+            self.assertEqual(1, doctor.returncode, doctor.stdout)
+            self.assertIn("matcher Skill", doctor.stdout)
+
+    def test_toda_skill_do_kit_esta_nas_listas_de_metodo_do_instalador(self) -> None:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("kit_lib", KIT / ".claude/hooks/_lib.py")
+        assert spec is not None and spec.loader is not None
+        lib = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(lib)
+        for skill in sorted((KIT / ".claude/skills").iterdir()):
+            with self.subTest(skill=skill.name):
+                self.assertIn(f".claude/skills/{skill.name}", init_harness.MANAGED_TREES)
+                self.assertIn(f".claude/skills/{skill.name}/", lib.METODO_CLIENTE)
+
+    def test_instalador_nao_distribui_bytecode_das_arvores_gerenciadas(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp)
+            runners = source / ".claude/skills/evolve/runners"
+            (runners / "__pycache__").mkdir(parents=True)
+            (runners / "static_eval.py").write_text("", encoding="utf-8")
+            (runners / "__pycache__/static_eval.cpython-311.pyc").write_bytes(b"x")
+
+            paths = init_harness.managed_paths(source)
+
+            self.assertIn(".claude/skills/evolve/runners/static_eval.py", paths)
+            self.assertFalse([path for path in paths if "__pycache__" in path or path.endswith(".pyc")])
+
     def test_upgrade_migra_nomes_legados(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "legado"

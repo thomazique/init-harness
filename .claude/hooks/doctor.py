@@ -18,6 +18,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 import _lib as L  # noqa: E402
+import skill_evolution as E  # noqa: E402
 
 
 def _duplicate_ids(path: Path, pattern: str, first_column_only: bool = False) -> dict[str, list[int]]:
@@ -104,6 +105,10 @@ def main() -> int:
         ".claude/hooks/pre_compact.py",
         ".claude/hooks/stop_check.py",
         ".claude/hooks/doctor.py",
+        ".claude/hooks/skill_evolution.py",
+        ".claude/hooks/skill_observe.py",
+        ".claude/hooks/skill_worker.py",
+        ".claude/hooks/skill_reviewer.py",
         ".githooks/pre-commit",
         ".githooks/pre_commit.py",
         ".init-harness/schema/config.schema.json",
@@ -134,6 +139,7 @@ def main() -> int:
                     "guard_files.py",
                     "pre_compact.py",
                     "stop_check.py",
+                    "skill_observe.py",
                 )
                 if nome not in serializado
             ]
@@ -141,10 +147,43 @@ def main() -> int:
                 erros.append("hooks ausentes de settings.json: " + ", ".join(faltantes))
             else:
                 ok.append("hooks registrados em settings.json")
+            pre_tool_use = dados.get("hooks", {}).get("PreToolUse", [])
+            ativa_skill = any(
+                entrada.get("matcher") == "Skill" and "skill_observe.py" in json.dumps(entrada)
+                for entrada in pre_tool_use
+                if isinstance(entrada, dict)
+            )
+            if "skill_observe.py" in serializado and not ativa_skill:
+                erros.append(
+                    "settings.json sem PreToolUse com matcher Skill para skill_observe.py: "
+                    "a skill ativa nunca é definida e nenhuma experiência é capturada"
+                )
             if re.search(r'"command"\s*:\s*"(?:[A-Za-z]:[\\/]|/)', serializado):
                 avisos.append("settings.json contém comando com caminho absoluto; a instalação pode não ser portátil")
         except (OSError, json.JSONDecodeError):
             erros.append(".claude/settings.json inválido")
+
+    skills_dir = raiz / ".claude" / "skills"
+    problemas_skills: list[str] = []
+    arquivos_skill = sorted(skills_dir.glob("*/SKILL.md")) if skills_dir.is_dir() else []
+    for arquivo in arquivos_skill:
+        nome_dir = arquivo.parent.name
+        texto = arquivo.read_text(encoding="utf-8", errors="replace")
+        if not texto.startswith("---"):
+            problemas_skills.append(f"{nome_dir}: o frontmatter precisa começar na linha 1 com ---")
+            continue
+        meta = E.parse_frontmatter(texto)
+        if meta.get("name") != nome_dir:
+            problemas_skills.append(
+                f"{nome_dir}: name do frontmatter ({meta.get('name') or 'ausente'}) difere do diretório"
+            )
+        if not meta.get("description"):
+            problemas_skills.append(f"{nome_dir}: description ausente ou vazia no frontmatter")
+    if problemas_skills:
+        for problema in problemas_skills:
+            erros.append("skill inválida: " + problema)
+    elif arquivos_skill:
+        ok.append(f"{len(arquivos_skill)} skill(s) com frontmatter válido")
 
     dentro_git = bool(L.git(["rev-parse", "--is-inside-work-tree"], raiz))
     if not dentro_git:

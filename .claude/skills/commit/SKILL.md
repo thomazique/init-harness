@@ -1,4 +1,3 @@
-
 ---
 name: commit
 description: Convenção de commits, branches e pull requests do harness. Use sempre que for criar commit, nomear branch, abrir ou descrever PR, ou revisar o que está staged. A mensagem nasce do diff real, nunca da memória da conversa.

@@ -10,4 +10,5 @@ desnecessários. A detecção de padrões é defesa em profundidade, não garant
 
 Graphify, clientes MCP e provedores de IA são integrações opt-in com suas
 próprias políticas. Revise permissões, arquivos ignorados e o que será enviado
-a ferramentas externas antes de habilitá-las.
+a ferramentas externas antes de habilitá-las. O runner `reviewer_claude.py`, quando usado,
+envia ao provedor do seu cliente Claude o resumo de uma experiência e o texto da skill revisada.

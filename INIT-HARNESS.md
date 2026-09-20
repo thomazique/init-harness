@@ -422,6 +422,7 @@ A camada que permanece no modo `cliente` precisa operar sem este arquivo. O offb
 | `pilares` | Implantação, antes de frente grande, mudança de tier |
 | `commit` | Commit, branch ou PR |
 | `record` | Registro de experiência relevante para evolução de skill |
+| `evolve` | Sugestão ou proposta de skill sem candidata escrita |
 | `offboarding` | Encerramento de implantação em modo `cliente` |
 
 Diagnóstico da instalação: `uv run --no-project --python ">=3.10" .claude/hooks/doctor.py`.
@@ -443,6 +444,8 @@ python .claude/hooks/skill_evolution.py experiences <skill> --limit 20
 python .claude/hooks/skill_evolution.py suggestions <skill>
 python .claude/hooks/skill_evolution.py propose <skill> --suggestion <S-ID> --owner <identificador>
 python .claude/hooks/skill_evolution.py proposals <skill>
+python .claude/hooks/skill_evolution.py proposal-context <skill> --proposal <P-ID>
+python .claude/hooks/skill_evolution.py submit-candidate <skill> --proposal <P-ID> --summary "o que mudou e por quê"
 python .claude/hooks/skill_evolution.py evaluate <skill> --proposal <P-ID> --baseline-score 0.70 --candidate-score 0.82
 python .claude/hooks/skill_evolution.py evaluate-results <skill> --proposal <P-ID> --results eval/results.json
 python .claude/hooks/skill_evolution.py accept <skill> --proposal <P-ID>
@@ -450,21 +453,21 @@ python .claude/hooks/skill_evolution.py configure-evaluation <skill> --metric co
 python .claude/hooks/skill_evolution.py configure-usage <skill> --when "..." --expected-outcome "..."
 python .claude/hooks/skill_evolution.py init-evaluation <skill>
 python .claude/hooks/skill_evolution.py validate-cases <skill>
-python .claude/hooks/skill_evolution.py run-evaluation <skill> --proposal <P-ID> --runner eval/runner.py
+python .claude/hooks/skill_evolution.py run-evaluation <skill> --proposal <P-ID> --runner .claude/skills/evolve/runners/static_eval.py
 echo '{"skill_experience":{"skill":"<skill>","task_id":"<id>","outcome":"success","summary":"fato observado"}}' |
   python .claude/hooks/skill_evolution.py capture-hook
 python .claude/hooks/skill_evolution.py activate <skill> --session-id <id>
 python .claude/hooks/skill_evolution.py active --session-id <id>
 python .claude/hooks/skill_evolution.py deactivate --session-id <id>
 python .claude/hooks/skill_evolution.py jobs --status queued
-python .claude/hooks/skill_worker.py --runner eval/cheap_worker.py --once
-python .claude/hooks/skill_reviewer.py --runner eval/expensive_reviewer.py --once
+python .claude/hooks/skill_worker.py --runner .claude/skills/evolve/runners/worker_static.py --once
+python .claude/hooks/skill_reviewer.py --runner .claude/skills/evolve/runners/reviewer_claude.py --once
 python .claude/hooks/skill_evolution.py review-job <J-ID> --decision approved --note "revisado"
 python .claude/hooks/skill_evolution.py status
 ```
 
 `sync` escreve `.init-harness/skills/registry.json` e um `manifest.json` por skill.
-Skills `init-harness`, `spec`, `pilares`, `commit`, `offboarding` e `record` são classificadas
+Skills `init-harness`, `spec`, `pilares`, `commit`, `offboarding`, `record` e `evolve` são classificadas
 como método; as demais são classificadas como skills próprias do projeto. O catálogo
 preserva versão, status, risco e data da última avaliação para as próximas etapas de
 proposta e avaliação.
@@ -504,6 +507,14 @@ fatos observáveis.
 usa esse contexto como fallback quando o evento não repetir o nome da skill; a
 ativação não cria experiência sozinha e pode ser encerrada com `deactivate`.
 
+A ativação é automática: o hook `PreToolUse` com matcher `Skill` chama
+`skill_observe.py`, que ativa a skill invocada quando ela existe no catálogo do
+projeto (skills de plugins ou do usuário são ignoradas). Ao invocar outra skill na
+mesma sessão, a observação da anterior é fechada como experiência própria antes da
+troca, para que suas chamadas não sejam atribuídas à nova.
+O `doctor.py` reprova a instalação se esse hook não estiver registrado ou se algum
+`SKILL.md` tiver frontmatter ilegível.
+
 Cada experiência registrada também cria um job `skill_experience_analysis` em
 `.init-harness/skills/queue/`. A fila é idempotente e persistente; hooks apenas
 registram o job, sem chamar modelos ou bloquear a sessão. O worker econômico será
@@ -514,16 +525,57 @@ um objeto JSON de análise e indicar `needs_review: true` quando a análise prec
 do agente caro. O worker não usa shell, aplica timeout e registra falhas no próprio
 job. A revisão cara será uma etapa separada e nunca é executada pelo hook.
 
+Ciclo de um job (`status` mostra a contagem de cada estado):
+
+| Status | Significa | Depois |
+|---|---|---|
+| `queued` | Experiência registrada, aguardando o worker | `processing` |
+| `processing` | Um runner está trabalhando nele | resultado do runner |
+| `analyzed` | O worker concluiu que não exige julgamento | encerrado |
+| `review_required` | O worker pede o revisor caro | `processing` |
+| `review_approved` | O revisor considera que a evidência sustenta uma proposta | decisão humana |
+| `human_required` | O revisor sinalizou `needs_human` e não decidiu sozinho | decisão humana |
+| `rejected` | Descartado pelo revisor ou pelo humano | encerrado |
+| `approved` | O humano aprovou; a proposta já foi aberta (`proposal_id`, `suggestion_id`) | `promoted` |
+| `promoted` | A proposta vinculada foi promovida (`promoted_version`) | encerrado |
+| `failed` | Runner com erro, timeout ou saída inválida (`error`) | sem reenfileiramento automático |
+
+`review-job --decision approved --note "..." [--owner <quem>]` só vale para `review_approved`
+ou `human_required`. Aprovar abre uma proposta em rascunho: reusa a sugestão aberta que contém
+a experiência ou, se não houver (falha isolada abaixo do limiar), cria uma com `origin: review`.
+Jobs do mesmo padrão compartilham a sugestão e a proposta. Se a criação falhar, ou se a
+experiência já tiver sido tratada por uma sugestão promovida, a decisão não é gravada e o job
+continua decidível. `accept` da proposta marca os jobs vinculados como `promoted`. A partir daí
+o caminho é o da skill `evolve`: escrever a candidata, submeter e avaliar.
+
 Quando uma experiência cria um padrão recorrente — duas ocorrências do mesmo tipo
 ou uma correção humana explícita — o harness cria uma sugestão em
 `.init-harness/skills/<skill>/suggestions.jsonl`, vinculada aos IDs das experiências
 que a sustentam. Sugestões são somente propostas: não alteram, promovem ou fazem
 rollback de skills.
 
+Uma sugestão é viva enquanto está aberta. Cada nova ocorrência do padrão atualiza
+`occurrences`, `evidence_event_ids`, `summaries` e `rationale` no lugar (`updated_at`
+registra quando); a evidência só cresce. O status acompanha o ciclo: `proposed` (aberta),
+`in_progress` (já existe proposta, que segue acumulando evidência na sugestão) e `addressed`
+(a proposta foi promovida; `addressed_by` e `addressed_at` registram qual). Uma sugestão
+`addressed` fica congelada como histórico. Só ocorrências posteriores à promoção podem abrir
+outra, com o limiar de sempre (duas ocorrências ou uma correção humana): é o sinal de que a
+correção não resolveu. Correções humanas sem `failure_type` nem tag acumulam em uma única
+sugestão `correction:unspecified`.
+
 Uma sugestão pode ser materializada como proposta com `propose`. Isso cria um
 diretório versionável em `.init-harness/skills/<skill>/proposals/`, contendo o
 manifesto JSON, o hash da skill ativa, as evidências vinculadas e um checklist de
 avaliação. A criação da proposta não modifica o `SKILL.md`.
+
+A candidata é escrita pela skill `evolve`. `proposal-context` reúne a evidência
+vinculada, a política de avaliação, o contrato de uso e os casos existentes.
+`submit-candidate` valida a candidata (frontmatter na linha 1, `name` igual à skill,
+diferente da base, skill ativa intacta), grava o resumo da mudança na proposta e a
+marca como `candidate`. Falha automática (`source=system`) não explica o motivo:
+sem evidência explicada, a skill não edita e pede um `/record` com o fato observado.
+A promoção continua exclusiva de `accept`, que exige a candidata idêntica à avaliada.
 
 `evaluate` exige que a candidata tenha frontmatter válido, seja diferente da base,
 melhore o score, não tenha regressões e não tenha falhas de guardrail. Se aprovada,
@@ -556,3 +608,22 @@ caso informa `case_id`, `baseline_score`, `candidate_score`, `baseline_passed`,
 médias, regressões e falhas automaticamente e aplica a política da skill. O harness
 não executa comandos arbitrários do JSON; o runner continua sendo específico do
 projeto e deve produzir somente resultados observáveis.
+
+O kit traz três runners de referência em `.claude/skills/evolve/runners/`, instalados com a skill `evolve`.
+São ponto de partida: um projeto que precise de mais os substitui por runners próprios.
+
+| Runner | Usado por | O que faz | O que não faz |
+|---|---|---|---|
+| `worker_static.py` | `skill_worker.py` | Triagem determinística, sem modelo. Encerra sucesso sem correção e falha automática sem explicação; encaminha ao revisor correção humana, padrão recorrente e falha explicada | Não interpreta a causa da falha |
+| `reviewer_claude.py` | `skill_reviewer.py` | Chama `claude -p` sem ferramentas, com teto de custo e em diretório temporário; exige JSON `approved`/`rationale`/`risks`. Saída inválida faz o job virar `failed` | Não decide pelo humano: `approved` só leva o job à decisão de `review-job` |
+| `static_eval.py` | `run-evaluation` | Verificação **estrutural**: a candidata contém o que os casos exigem (`must_mention`, `must_not_mention`) e preserva os `guardrails` da base | **Não mede comportamento do agente.** Aprovar aqui prova que o texto mudou como o caso pede, não que a skill passou a funcionar melhor |
+
+`reviewer_claude.py` é opt-in e envia ao provedor do cliente Claude o resumo da experiência,
+a triagem e o texto da `SKILL.md`, nunca prompts, transcrições ou outros arquivos. Modelo,
+executável e teto de custo vêm de `INIT_HARNESS_REVIEWER_MODEL` (padrão `opus`),
+`INIT_HARNESS_CLAUDE_BIN` e `INIT_HARNESS_REVIEWER_BUDGET_USD` (padrão `0.50`).
+
+Casos para o `static_eval.py` usam `expected` com `must_mention`, `must_not_mention` e
+`guardrails` (comparação sem diferenciar caixa nem espaçamento). Um caso sem asserções, ou com
+guardrail ausente da base, é erro; o exemplo criado por `init-evaluation` traz `"example": true`
+e é ignorado.

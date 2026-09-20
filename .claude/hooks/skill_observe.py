@@ -1,4 +1,4 @@
-"""Observa eventos de ferramentas sem capturar prompts ou respostas completas."""
+"""Ativa a skill da sessão e observa eventos de ferramentas, sem capturar prompts ou respostas."""
 
 from __future__ import annotations
 
@@ -16,7 +16,8 @@ def main() -> None:
     if L.harness(root) is None:
         return
     try:
-        E.observe_tool_event(root, event)
+        if E.activate_from_tool_event(root, event) is None:
+            E.observe_tool_event(root, event)
     except Exception:
         pass
 

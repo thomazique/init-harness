@@ -15,12 +15,12 @@ import sys
 import uuid
 from datetime import date, datetime, timezone
 from hashlib import sha256
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 REGISTRY_RELATIVE = Path(".init-harness") / "skills" / "registry.json"
 QUEUE_RELATIVE = Path(".init-harness") / "skills" / "queue"
-METHOD_SKILLS = {"init-harness", "spec", "pilares", "commit", "offboarding", "record"}
+METHOD_SKILLS = {"init-harness", "spec", "pilares", "commit", "offboarding", "record", "evolve"}
 OUTCOMES = {"success", "failure", "partial", "blocked"}
 SOURCES = {"agent", "human", "test", "system"}
 DEFAULT_EVALUATION_POLICY = {
@@ -102,16 +102,30 @@ def _job_file(root: Path, job_id: str) -> Path:
     return queue_path(root) / f"{job_id}.json"
 
 
+def _job_sequence(job: dict[str, Any]) -> int:
+    try:
+        return int(job.get("sequence") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _job_paths(root: Path) -> list[Path]:
+    """Arquivos de job da fila; J-<id>.analysis.json e J-<id>.review.json são saídas de runners."""
+    return sorted(path for path in queue_path(root).glob("J-*.json") if re.fullmatch(r"J-[0-9a-f]+\.json", path.name))
+
+
 def enqueue_analysis_job(root: Path, event: dict[str, Any]) -> dict[str, Any]:
     """Adiciona um job idempotente para análise assíncrona da experiência."""
     queue_path(root).mkdir(parents=True, exist_ok=True)
-    for path in queue_path(root).glob("J-*.json"):
+    sequence = 0
+    for path in _job_paths(root):
         try:
             existing = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
         if existing.get("experience_event_id") == event.get("event_id"):
             return existing
+        sequence = max(sequence, _job_sequence(existing))
     job = {
         "job_id": "J-" + uuid.uuid4().hex[:12],
         "type": "skill_experience_analysis",
@@ -119,7 +133,8 @@ def enqueue_analysis_job(root: Path, event: dict[str, Any]) -> dict[str, Any]:
         "skill": event["skill"],
         "experience_event_id": event["event_id"],
         "experience": event,
-        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "sequence": sequence + 1,
+        "created_at": datetime.now(timezone.utc).isoformat(timespec="microseconds"),
         "attempts": 0,
     }
     _job_file(root, job["job_id"]).write_text(json.dumps(job, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -128,14 +143,16 @@ def enqueue_analysis_job(root: Path, event: dict[str, Any]) -> dict[str, Any]:
 
 def read_jobs(root: Path, status: str | None = None) -> list[dict[str, Any]]:
     jobs: list[dict[str, Any]] = []
-    for path in sorted(queue_path(root).glob("J-*.json")):
+    for path in _job_paths(root):
         try:
             job = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise ValueError(f"job inválido em {path}") from exc
         if status is None or job.get("status") == status:
             jobs.append(job)
-    return jobs
+    # O nome do arquivo é um UUID aleatório e o relógio pode empatar (no Windows a resolução é grossa):
+    # a ordem de criação vem de `sequence`. Jobs anteriores a ela (sem o campo) vêm primeiro, por horário.
+    return sorted(jobs, key=lambda job: (_job_sequence(job), str(job.get("created_at") or "")))
 
 
 def update_job(root: Path, job_id: str, status: str, **updates: Any) -> dict[str, Any]:
@@ -145,6 +162,7 @@ def update_job(root: Path, job_id: str, status: str, **updates: Any) -> dict[str
         "analyzed",
         "review_required",
         "review_approved",
+        "human_required",
         "approved",
         "rejected",
         "promoted",
@@ -181,20 +199,25 @@ def claim_next_job(root: Path) -> dict[str, Any] | None:
         lock.unlink(missing_ok=True)
 
 
-def decide_job(root: Path, job_id: str, decision: str, note: str) -> dict[str, Any]:
+def decide_job(root: Path, job_id: str, decision: str, note: str, owner: str | None = None) -> dict[str, Any]:
+    """Registra a decisão humana; aprovar também abre a proposta de evolução da skill.
+
+    A proposta é só um rascunho (nada altera a skill ativa). Se a criação falhar, a decisão
+    não é gravada e o job continua decidível.
+    """
     if decision not in {"approved", "rejected"}:
         raise ValueError("decisão deve ser approved ou rejected")
     if not note.strip():
         raise ValueError("note é obrigatório para a decisão humana")
     current = next((job for job in read_jobs(root) if job.get("job_id") == job_id), None)
-    if current is None or current.get("status") != "review_approved":
-        raise ValueError("job precisa estar review_approved para aprovação humana")
-    return update_job(
-        root,
-        job_id,
-        decision,
-        human_decision={"note": note.strip(), "at": datetime.now(timezone.utc).isoformat(timespec="seconds")},
-    )
+    if current is None or current.get("status") not in {"review_approved", "human_required"}:
+        raise ValueError("job precisa estar em review_approved ou human_required para decisão humana")
+    updates: dict[str, Any] = {"human_decision": {"note": note.strip(), "at": _now()}}
+    if decision == "approved":
+        suggestion = _suggestion_for_event(root, current["skill"], current["experience"])
+        proposal = create_proposal(root, current["skill"], suggestion["suggestion_id"], owner)
+        updates.update(suggestion_id=suggestion["suggestion_id"], proposal_id=proposal["proposal_id"])
+    return update_job(root, job_id, decision, **updates)
 
 
 def evolution_status(root: Path) -> dict[str, Any]:
@@ -202,10 +225,13 @@ def evolution_status(root: Path) -> dict[str, Any]:
     return {
         "queued": sum(job.get("status") == "queued" for job in jobs),
         "processing": sum(job.get("status") == "processing" for job in jobs),
+        "analyzed": sum(job.get("status") == "analyzed" for job in jobs),
         "review_required": sum(job.get("status") == "review_required" for job in jobs),
         "review_approved": sum(job.get("status") == "review_approved" for job in jobs),
+        "human_required": sum(job.get("status") == "human_required" for job in jobs),
         "approved": sum(job.get("status") == "approved" for job in jobs),
         "rejected": sum(job.get("status") == "rejected" for job in jobs),
+        "promoted": sum(job.get("status") == "promoted" for job in jobs),
         "failed": sum(job.get("status") == "failed" for job in jobs),
         "total": len(jobs),
     }
@@ -223,13 +249,25 @@ def _skill_ids(root: Path) -> set[str]:
     return {item["id"] for item in discover_skills(root)}
 
 
+def _is_unsafe_path(value: str) -> bool:
+    """Caminho absoluto ou com `..`, lendo `/` e `\\` como separadores em qualquer sistema.
+
+    Um caminho registrado no Windows (`..\\segredo.txt`) precisa ser recusado também no Linux,
+    onde `Path` trata a barra invertida como parte do nome.
+    """
+    for flavor in (PurePosixPath, PureWindowsPath):
+        path = flavor(value)
+        if path.anchor or path.is_absolute() or ".." in path.parts:
+            return True
+    return False
+
+
 def _relative_paths(root: Path, values: list[str]) -> list[str]:
     result: list[str] = []
     for value in values:
-        path = Path(value)
-        if path.is_absolute() or ".." in path.parts:
+        if _is_unsafe_path(value):
             raise ValueError(f"caminho deve ser relativo ao projeto: {value}")
-        result.append(path.as_posix())
+        result.append(Path(value).as_posix())
     return result
 
 
@@ -290,6 +328,34 @@ def active_skill(root: Path, session_id: str) -> dict[str, Any]:
     return {"session_id": session_id, "active_skill": state.get("active_skill")}
 
 
+def activate_from_tool_event(root: Path, payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Ativa a skill da sessão quando o cliente invoca a ferramenta Skill.
+
+    Só reage a PreToolUse da ferramenta Skill e a skills presentes no catálogo do
+    projeto; skills de outros escopos (plugins, usuário) são ignoradas. Ao trocar de
+    skill, a observação acumulada da anterior vira uma experiência própria antes da
+    troca, para que suas chamadas de ferramenta não sejam atribuídas à nova skill.
+    """
+    if str(payload.get("hook_event_name") or "") != "PreToolUse" or payload.get("tool_name") != "Skill":
+        return None
+    tool_input = payload.get("tool_input")
+    name = str((tool_input or {}).get("skill") or "").strip().lstrip("/") if isinstance(tool_input, dict) else ""
+    session_id = str(payload.get("session_id") or "").strip()
+    if not session_id or name not in _skill_ids(root):
+        return None
+    path, state = _load_session_state(root, session_id)
+    previous = state.get("active_skill")
+    observation = state.get("skill_observation")
+    if previous and previous != name and isinstance(observation, dict) and observation.get("skill") == previous:
+        consolidated = consolidate_hook_experience({"session_id": session_id, "active_skill": previous}, observation)
+        if consolidated is not None:
+            capture_hook_experience(root, {"session_id": session_id, "skill_experience": consolidated})
+        state.pop("skill_observation", None)
+        state.pop("skill_observation_seen", None)
+        _save_session_state(path, state)
+    return activate_skill(root, name, session_id)
+
+
 def observe_tool_event(root: Path, payload: dict[str, Any]) -> dict[str, Any] | None:
     """Acumula sinais objetivos de uma ferramenta no estado da sessão."""
     session_id = str(payload.get("session_id") or "").strip()
@@ -335,7 +401,7 @@ def observe_tool_event(root: Path, payload: dict[str, Any]) -> dict[str, Any] | 
     files = observation.setdefault("files", [])
     for value in candidates if isinstance(candidates, list) else []:
         candidate = Path(str(value))
-        if not candidate.is_absolute() and ".." not in candidate.parts and candidate.as_posix() not in files:
+        if not _is_unsafe_path(str(value)) and candidate.as_posix() not in files:
             files.append(candidate.as_posix())
     _save_session_state(path, state)
     return observation
@@ -346,8 +412,11 @@ def consolidate_hook_experience(payload: dict[str, Any], observation: dict[str, 
     nested = payload.get("skill_experience")
     experience = dict(nested) if isinstance(nested, dict) else {}
     skill = str(
-        experience.get("skill") or payload.get("active_skill") or payload.get("skill")
-        or (observation or {}).get("skill") or ""
+        experience.get("skill")
+        or payload.get("active_skill")
+        or payload.get("skill")
+        or (observation or {}).get("skill")
+        or ""
     ).strip()
     session_id = str(experience.get("session_id") or payload.get("session_id") or "").strip() or None
     task_id = str(experience.get("task_id") or payload.get("task_id") or "").strip() or session_id
@@ -397,11 +466,14 @@ def consolidate_hook_experience(payload: dict[str, Any], observation: dict[str, 
     if observation:
         result.setdefault("tools", sorted((observation.get("tools") or {}).keys()))
         result.setdefault("files", observation.get("files") or [])
-        result.setdefault("metrics", {
-            "tool_calls": calls,
-            "tool_failures": failures,
-            "duration_ms": observation.get("duration_ms", 0),
-        })
+        result.setdefault(
+            "metrics",
+            {
+                "tool_calls": calls,
+                "tool_failures": failures,
+                "duration_ms": observation.get("duration_ms", 0),
+            },
+        )
     return result
 
 
@@ -518,9 +590,9 @@ def capture_hook_experience(root: Path, payload: dict[str, Any]) -> dict[str, An
         human_correction=bool(data.get("human_correction")),
         tool=values("tools"),
         file=values("files"),
-        metric=values("metrics") if isinstance(data.get("metrics"), list) else [
-            f"{key}={value}" for key, value in (data.get("metrics") or {}).items()
-        ],
+        metric=values("metrics")
+        if isinstance(data.get("metrics"), list)
+        else [f"{key}={value}" for key, value in (data.get("metrics") or {}).items()],
         tag=values("tags"),
     )
     return record_experience(root, args)
@@ -589,60 +661,176 @@ def read_proposals(root: Path, skill: str) -> list[dict[str, Any]]:
     return rows
 
 
+def _suggestion_key(event: dict[str, Any]) -> str:
+    failure_type = str(event.get("failure_type") or "").strip().lower()
+    tags = ",".join(event.get("tags") or [])
+    return f"failure_type:{failure_type}" if failure_type else f"correction:{tags or 'unspecified'}"
+
+
 def _suggestion_groups(experiences: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     groups: dict[str, list[dict[str, Any]]] = {}
     for event in experiences:
         if event.get("outcome") not in {"failure", "partial", "blocked"} and not event.get("human_correction"):
             continue
-        failure_type = str(event.get("failure_type") or "").strip().lower()
-        tags = ",".join(event.get("tags") or [])
-        key = f"failure_type:{failure_type}" if failure_type else f"correction:{tags or 'unspecified'}"
-        groups.setdefault(key, []).append(event)
+        groups.setdefault(_suggestion_key(event), []).append(event)
     return groups
 
 
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _write_suggestions(root: Path, skill: str, rows: list[dict[str, Any]]) -> None:
+    """Reescreve o arquivo por inteiro: as sugestões são atualizadas no lugar."""
+    path = suggestions_path(root, skill)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(
+        "".join(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n" for row in rows),
+        encoding="utf-8",
+        newline="\n",
+    )
+    temporary.replace(path)
+
+
+def _suggestion_rationale(pattern: str, count: int, human_correction: bool) -> str:
+    return f"O padrão {pattern.split(':', 1)[1]!r} apareceu em {count} experiência(s)" + (
+        " e houve correção humana." if human_correction else "."
+    )
+
+
+def _build_suggestion(
+    skill: str, pattern: str, events: list[dict[str, Any]], generation: int, origin: str | None = None
+) -> dict[str, Any]:
+    seed = f"{skill}\0{pattern}" if generation == 0 else f"{skill}\0{pattern}\0g{generation}"
+    fingerprint = sha256(seed.encode("utf-8")).hexdigest()[:16]
+    now = _now()
+    suggestion = {
+        "suggestion_id": "S-" + fingerprint[:12],
+        "fingerprint": fingerprint,
+        "skill": skill,
+        "status": "proposed",
+        "created_at": now,
+        "updated_at": now,
+        "pattern": pattern,
+        "occurrences": len(events),
+        "evidence_event_ids": [event["event_id"] for event in events],
+        "summaries": [event["summary"] for event in events[-5:]],
+        "rationale": _suggestion_rationale(pattern, len(events), any(e.get("human_correction") for e in events)),
+        "proposed_action": (
+            "Revisar a skill para tratar esse padrão e criar um caso de regressão antes de propor uma nova versão."
+        ),
+    }
+    if origin:
+        suggestion["origin"] = origin
+    return suggestion
+
+
+def _refresh_suggestion(
+    suggestion: dict[str, Any], events: list[dict[str, Any]], by_id: dict[str, dict[str, Any]]
+) -> bool:
+    """Acrescenta ocorrências novas a uma sugestão aberta; nunca remove evidência."""
+    ids = list(suggestion.get("evidence_event_ids", []))
+    new = [event["event_id"] for event in events if event["event_id"] not in ids]
+    if not new:
+        return False
+    ids.extend(new)
+    known = [by_id[item] for item in ids if item in by_id]
+    suggestion["evidence_event_ids"] = ids
+    suggestion["occurrences"] = len(ids)
+    suggestion["summaries"] = [event["summary"] for event in known[-5:]]
+    suggestion["rationale"] = _suggestion_rationale(
+        suggestion["pattern"], len(ids), any(event.get("human_correction") for event in known)
+    )
+    suggestion["updated_at"] = _now()
+    return True
+
+
 def identify_suggestions(root: Path, skill: str) -> list[dict[str, Any]]:
-    """Cria sugestões determinísticas a partir de padrões observados.
+    """Cria e mantém sugestões determinísticas a partir de padrões observados.
 
     O limiar evita transformar uma falha isolada em mudança de skill, mas uma
     correção humana explícita já é suficiente para sinalizar um padrão a revisar.
+    Uma sugestão aberta (proposed ou in_progress) acumula as ocorrências novas. Depois
+    que uma proposta a promove (addressed), a sugestão fica congelada como histórico e só
+    as ocorrências posteriores podem abrir outra: é o sinal de que a correção não resolveu.
     """
     experiences = read_experiences(root, skill)
-    existing = read_suggestions(root, skill)
-    known = {item.get("fingerprint") for item in existing}
+    by_id = {event["event_id"]: event for event in experiences if event.get("event_id")}
+    rows = read_suggestions(root, skill)
     created: list[dict[str, Any]] = []
+    changed = False
     for pattern, events in _suggestion_groups(experiences).items():
-        human_correction = any(event.get("human_correction") for event in events)
-        if len(events) < 2 and not human_correction:
-            continue
-        fingerprint = sha256(f"{skill}\0{pattern}".encode("utf-8")).hexdigest()[:16]
-        if fingerprint in known:
-            continue
-        failure_type = pattern.split(":", 1)[1]
-        suggestion = {
-            "suggestion_id": "S-" + fingerprint[:12],
-            "fingerprint": fingerprint,
-            "skill": skill,
-            "status": "proposed",
-            "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "pattern": pattern,
-            "occurrences": len(events),
-            "evidence_event_ids": [event["event_id"] for event in events],
-            "summaries": [event["summary"] for event in events[-5:]],
-            "rationale": (
-                f"O padrão {failure_type!r} apareceu em {len(events)} experiência(s)"
-                + (" e houve correção humana." if human_correction else ".")
-            ),
-            "proposed_action": (
-                "Revisar a skill para tratar esse padrão e criar um caso de regressão "
-                "antes de propor uma nova versão."
-            ),
+        versions = [row for row in rows if row.get("pattern") == pattern]
+        consumed = {
+            item for row in versions if row.get("status") == "addressed" for item in row.get("evidence_event_ids", [])
         }
-        with suggestions_path(root, skill).open("a", encoding="utf-8", newline="\n") as handle:
-            handle.write(json.dumps(suggestion, ensure_ascii=False, separators=(",", ":")) + "\n")
-        known.add(fingerprint)
+        pending = [event for event in events if event["event_id"] not in consumed]
+        if versions and versions[-1].get("status") != "addressed":
+            changed = _refresh_suggestion(versions[-1], pending, by_id) or changed
+            continue
+        if len(pending) < 2 and not any(event.get("human_correction") for event in pending):
+            continue
+        suggestion = _build_suggestion(skill, pattern, pending, generation=len(versions))
+        rows.append(suggestion)
         created.append(suggestion)
+        changed = True
+    if changed:
+        _write_suggestions(root, skill, rows)
     return created
+
+
+def _suggestion_for_event(root: Path, skill: str, event: dict[str, Any]) -> dict[str, Any]:
+    """Sugestão aberta que contém a experiência; sem ela, a decisão humana a cria.
+
+    Uma falha isolada não atinge o limiar automático, mas um humano ter aprovado o job vale
+    como evidência suficiente para abrir a proposta.
+    """
+    event_id = event["event_id"]
+    rows = read_suggestions(root, skill)
+    holder = next((row for row in rows if event_id in row.get("evidence_event_ids", [])), None)
+    if holder is not None:
+        if holder.get("status") == "addressed":
+            raise ValueError(
+                f"a experiência já foi tratada pela sugestão {holder['suggestion_id']}, promovida; "
+                "aguarde uma nova ocorrência"
+            )
+        return holder
+    by_id = {item["event_id"]: item for item in read_experiences(root, skill) if item.get("event_id")}
+    by_id.setdefault(event_id, event)
+    pattern = _suggestion_key(event)
+    versions = [row for row in rows if row.get("pattern") == pattern]
+    if versions and versions[-1].get("status") != "addressed":
+        target = versions[-1]
+        _refresh_suggestion(target, [event], by_id)
+    else:
+        target = _build_suggestion(skill, pattern, [event], generation=len(versions), origin="review")
+        rows.append(target)
+    _write_suggestions(root, skill, rows)
+    return target
+
+
+def _mark_jobs_promoted(root: Path, proposal_id: str, version: int) -> None:
+    """Contabilidade pós-promoção: não pode desfazer nem falhar uma promoção já aplicada."""
+    try:
+        jobs = read_jobs(root, "approved")
+    except ValueError:
+        return
+    for job in jobs:
+        if job.get("proposal_id") == proposal_id:
+            update_job(root, job["job_id"], "promoted", promoted_version=version)
+
+
+def _set_suggestion_status(root: Path, skill: str, suggestion_id: str | None, status: str, **extra: Any) -> None:
+    rows = read_suggestions(root, skill)
+    for row in rows:
+        if row.get("suggestion_id") != suggestion_id:
+            continue
+        if status == "in_progress" and row.get("status") != "proposed":
+            return
+        row.update(status=status, updated_at=_now(), **extra)
+        _write_suggestions(root, skill, rows)
+        return
 
 
 def create_proposal(root: Path, skill: str, suggestion_id: str, owner: str | None = None) -> dict[str, Any]:
@@ -726,6 +914,7 @@ def create_proposal(root: Path, skill: str, suggestion_id: str, owner: str | Non
         ),
         encoding="utf-8",
     )
+    _set_suggestion_status(root, skill, suggestion_id, "in_progress")
     sync_registry(root)
     return proposal
 
@@ -742,6 +931,97 @@ def _load_proposal(root: Path, skill: str, proposal_id: str) -> tuple[dict[str, 
 
 def _save_proposal(path: Path, proposal: dict[str, Any]) -> None:
     path.write_text(json.dumps(proposal, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def proposal_context(root: Path, skill: str, proposal_id: str) -> dict[str, Any]:
+    """Reúne o que o autor de uma candidata precisa ler antes de editá-la; não altera nada."""
+    proposal, _ = _load_proposal(root, skill, proposal_id)
+    ids = set(proposal.get("evidence_event_ids") or [])
+    fields = (
+        "event_id",
+        "source",
+        "outcome",
+        "score",
+        "failure_type",
+        "summary",
+        "human_correction",
+        "tools",
+        "files",
+        "tags",
+    )
+    evidence = [
+        {key: event.get(key) for key in fields}
+        for event in read_experiences(root, skill)
+        if event.get("event_id") in ids
+    ]
+    active = root / ".claude" / "skills" / skill / "SKILL.md"
+    active_hash = sha256(active.read_text(encoding="utf-8", errors="replace").encode("utf-8")).hexdigest()
+    cases_dir = root / ".init-harness" / "skills" / skill / "eval" / "cases"
+    contract = usage_contract(root, skill)
+    return {
+        "proposal_id": proposal_id,
+        "skill": skill,
+        "status": proposal.get("status"),
+        "pattern": proposal.get("pattern"),
+        "rationale": proposal.get("rationale"),
+        "base_path": proposal["base_path"],
+        "candidate_path": proposal["candidate_path"],
+        "active_matches_base": active_hash == proposal.get("base_sha256"),
+        "candidate_changed": (root / proposal["candidate_path"]).read_bytes()
+        != (root / proposal["base_path"]).read_bytes(),
+        "change_summary": proposal.get("change_summary"),
+        "evidence": evidence,
+        # Falha automática (source=system) só diz que houve falha, não o motivo.
+        "explained_evidence": sum(
+            1 for item in evidence if item.get("source") != "system" or item.get("human_correction")
+        ),
+        "usage_contract": contract,
+        "usage_contract_ready": bool(contract.get("when"))
+        and bool(str(contract.get("expected_outcome") or "").strip()),
+        "evaluation_policy": proposal.get("evaluation_policy") or evaluation_policy(root, skill),
+        "case_files": sorted(p.name for p in cases_dir.glob("*.json") if p.name != "schema.json")
+        if cases_dir.is_dir()
+        else [],
+    }
+
+
+def submit_candidate(root: Path, skill: str, proposal_id: str, summary: str) -> dict[str, Any]:
+    """Valida a candidata escrita para uma proposta e registra o que ela muda."""
+    summary = summary.strip()
+    if not summary:
+        raise ValueError("summary é obrigatório: descreva o que mudou e por quê")
+    proposal, path = _load_proposal(root, skill, proposal_id)
+    if proposal.get("status") in {"evaluated", "promoted", "conflict"}:
+        raise ValueError(f"proposta em status {proposal.get('status')} não aceita nova candidata; crie outra proposta")
+    active = root / ".claude" / "skills" / skill / "SKILL.md"
+    active_hash = sha256(active.read_text(encoding="utf-8", errors="replace").encode("utf-8")).hexdigest()
+    if active_hash != proposal.get("base_sha256"):
+        proposal["status"] = "conflict"
+        _save_proposal(path, proposal)
+        raise ValueError("skill ativa mudou desde a criação da proposta; recrie a proposta")
+    candidate = root / proposal["candidate_path"]
+    if not candidate.is_file():
+        raise ValueError(f"candidata ausente: {candidate}")
+    text = candidate.read_text(encoding="utf-8", errors="replace")
+    metadata = parse_frontmatter(text)
+    if metadata.get("name") != skill or not metadata.get("description"):
+        raise ValueError("candidata precisa de frontmatter na linha 1 com name igual à skill e description não vazia")
+    candidate_hash = sha256(text.encode("utf-8")).hexdigest()
+    if candidate_hash == proposal.get("base_sha256"):
+        raise ValueError("candidata não contém mudança em relação à skill ativa")
+    proposal["status"] = "candidate"
+    proposal["change_summary"] = summary
+    proposal["candidate_sha256"] = candidate_hash
+    proposal["candidate_submitted_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    proposal["evaluation"] = {"required": True, "regression_cases": [], "validation_score": None, "notes": None}
+    _save_proposal(path, proposal)
+    markdown = path.parent / "proposal.md"
+    if markdown.is_file():
+        head, marker, rest = markdown.read_text(encoding="utf-8").partition("## Mudança proposta\n\n")
+        _, separator, tail = rest.partition("\n\n## Avaliação obrigatória")
+        if marker and separator:
+            markdown.write_text(head + marker + summary + separator + tail, encoding="utf-8")
+    return proposal
 
 
 def evaluate_proposal(
@@ -780,18 +1060,14 @@ def evaluate_proposal(
         raise ValueError("candidata não contém mudança em relação à skill ativa")
     policy = proposal.get("evaluation_policy") or evaluation_policy(root, skill)
     improvement = (
-        candidate_score - baseline_score
-        if policy.get("higher_is_better", True)
-        else baseline_score - candidate_score
+        candidate_score - baseline_score if policy.get("higher_is_better", True) else baseline_score - candidate_score
     )
     required_improvement = (
         minimum_improvement if minimum_improvement is not None else float(policy.get("minimum_improvement", 0.0))
     )
     allowed_regressions = max_regressions if max_regressions is not None else int(policy.get("max_regressions", 0))
     allowed_guardrails = (
-        max_guardrail_failures
-        if max_guardrail_failures is not None
-        else int(policy.get("max_guardrail_failures", 0))
+        max_guardrail_failures if max_guardrail_failures is not None else int(policy.get("max_guardrail_failures", 0))
     )
     passed = (
         improvement >= required_improvement
@@ -822,7 +1098,7 @@ def evaluate_proposal(
 def _results_path(root: Path, value: str) -> Path:
     root = Path(os.path.abspath(root))
     path = Path(value)
-    if path.is_absolute() or ".." in path.parts:
+    if _is_unsafe_path(value):
         raise ValueError("arquivo de resultados deve estar dentro do projeto")
     resolved = Path(os.path.abspath(root / path))
     relative = Path(os.path.relpath(resolved, root))
@@ -926,7 +1202,14 @@ def init_evaluation(root: Path, skill: str) -> Path:
     if not example.exists():
         example.write_text(
             json.dumps(
-                {"case_id": "case-001", "task": "Cenário de exemplo", "input": {}, "expected": {}, "tags": []},
+                {
+                    "case_id": "case-001",
+                    "example": True,
+                    "task": "Cenário de exemplo",
+                    "input": {},
+                    "expected": {},
+                    "tags": [],
+                },
                 ensure_ascii=False,
                 indent=2,
             )
@@ -1058,6 +1341,9 @@ def accept_proposal(root: Path, skill: str, proposal_id: str) -> dict[str, Any]:
         proposal["status"] = "conflict"
         _save_proposal(path, proposal)
         raise ValueError("skill ativa mudou desde a avaliação; promoção cancelada")
+    candidate_hash = sha256(candidate.read_text(encoding="utf-8", errors="replace").encode("utf-8")).hexdigest()
+    if candidate_hash != evaluation.get("candidate_sha256"):
+        raise ValueError("candidata mudou depois da avaliação; avalie novamente antes de promover")
     active.write_text(candidate.read_text(encoding="utf-8"), encoding="utf-8")
     registry = load_registry(root)
     current_version = next(
@@ -1085,6 +1371,15 @@ def accept_proposal(root: Path, skill: str, proposal_id: str) -> dict[str, Any]:
     proposal["promoted_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     proposal["promoted_version"] = new_version
     _save_proposal(path, proposal)
+    _set_suggestion_status(
+        root,
+        skill,
+        proposal.get("suggestion_id"),
+        "addressed",
+        addressed_by=proposal_id,
+        addressed_at=proposal["promoted_at"],
+    )
+    _mark_jobs_promoted(root, proposal_id, new_version)
     _update_registry_skill(
         root,
         skill,
@@ -1188,9 +1483,7 @@ def sync_registry(root: Path) -> dict[str, Any]:
         proposals = read_proposals(root, item["id"])
         item["proposal_path"] = proposals_root(root, item["id"]).relative_to(root).as_posix()
         item["proposal_count"] = len(proposals)
-        item["history_path"] = old.get(
-            "history_path", f".init-harness/skills/{item['id']}/history/"
-        )
+        item["history_path"] = old.get("history_path", f".init-harness/skills/{item['id']}/history/")
         skills.append(item)
     result = {"schema_version": 1, "updated_at": date.today().isoformat(), "skills": skills}
     path = registry_path(root)
@@ -1244,6 +1537,13 @@ def parser() -> argparse.ArgumentParser:
     propose.add_argument("skill")
     propose.add_argument("--suggestion", required=True)
     propose.add_argument("--owner", default=None)
+    context = commands.add_parser("proposal-context", help="Mostra evidências e limites para escrever a candidata.")
+    context.add_argument("skill")
+    context.add_argument("--proposal", required=True)
+    submit = commands.add_parser("submit-candidate", help="Valida a candidata escrita e registra o resumo da mudança.")
+    submit.add_argument("skill")
+    submit.add_argument("--proposal", required=True)
+    submit.add_argument("--summary", required=True)
     evaluate = commands.add_parser("evaluate", help="Registra avaliação de uma proposta candidata.")
     evaluate.add_argument("skill")
     evaluate.add_argument("--proposal", required=True)
@@ -1311,6 +1611,7 @@ def parser() -> argparse.ArgumentParser:
             "analyzed",
             "review_required",
             "review_approved",
+            "human_required",
             "approved",
             "rejected",
             "promoted",
@@ -1321,6 +1622,7 @@ def parser() -> argparse.ArgumentParser:
     review_job.add_argument("job_id")
     review_job.add_argument("--decision", choices=("approved", "rejected"), required=True)
     review_job.add_argument("--note", required=True)
+    review_job.add_argument("--owner", default=None, help="Responsável pela proposta aberta ao aprovar.")
     commands.add_parser("status", help="Mostra o painel compacto da evolução.")
     return root
 
@@ -1335,10 +1637,22 @@ def main(argv: list[str] | None = None) -> int:
         print(format_listing(root, sync=True))
         return 0
     if args.command == "record":
-        before = {item["suggestion_id"] for item in read_suggestions(root, args.skill)}
+        before = {item["suggestion_id"]: item.get("occurrences") for item in read_suggestions(root, args.skill)}
         event = record_experience(root, args)
-        after = [item for item in read_suggestions(root, args.skill) if item["suggestion_id"] not in before]
-        print(json.dumps({"experience": event, "new_suggestions": after}, ensure_ascii=False, indent=2))
+        rows = read_suggestions(root, args.skill)
+        after = [item for item in rows if item["suggestion_id"] not in before]
+        updated = [
+            {"suggestion_id": item["suggestion_id"], "occurrences": item["occurrences"]}
+            for item in rows
+            if item["suggestion_id"] in before and item.get("occurrences") != before[item["suggestion_id"]]
+        ]
+        print(
+            json.dumps(
+                {"experience": event, "new_suggestions": after, "updated_suggestions": updated},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return 0
     if args.command == "experiences":
         print(json.dumps(read_experiences(root, args.skill, args.limit), ensure_ascii=False, indent=2))
@@ -1351,6 +1665,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "propose":
         print(json.dumps(create_proposal(root, args.skill, args.suggestion, args.owner), ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "proposal-context":
+        print(json.dumps(proposal_context(root, args.skill, args.proposal), ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "submit-candidate":
+        print(json.dumps(submit_candidate(root, args.skill, args.proposal, args.summary), ensure_ascii=False, indent=2))
         return 0
     if args.command == "evaluate":
         print(
@@ -1428,7 +1748,11 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(read_jobs(root, args.status), ensure_ascii=False, indent=2))
         return 0
     if args.command == "review-job":
-        print(json.dumps(decide_job(root, args.job_id, args.decision, args.note), ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                decide_job(root, args.job_id, args.decision, args.note, args.owner), ensure_ascii=False, indent=2
+            )
+        )
         return 0
     if args.command == "status":
         print(json.dumps(evolution_status(root), ensure_ascii=False, indent=2))
