@@ -15,7 +15,7 @@ import sys
 import uuid
 from datetime import date, datetime, timezone
 from hashlib import sha256
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 REGISTRY_RELATIVE = Path(".init-harness") / "skills" / "registry.json"
@@ -238,13 +238,25 @@ def _skill_ids(root: Path) -> set[str]:
     return {item["id"] for item in discover_skills(root)}
 
 
+def _is_unsafe_path(value: str) -> bool:
+    """Caminho absoluto ou com `..`, lendo `/` e `\\` como separadores em qualquer sistema.
+
+    Um caminho registrado no Windows (`..\\segredo.txt`) precisa ser recusado também no Linux,
+    onde `Path` trata a barra invertida como parte do nome.
+    """
+    for flavor in (PurePosixPath, PureWindowsPath):
+        path = flavor(value)
+        if path.anchor or path.is_absolute() or ".." in path.parts:
+            return True
+    return False
+
+
 def _relative_paths(root: Path, values: list[str]) -> list[str]:
     result: list[str] = []
     for value in values:
-        path = Path(value)
-        if path.is_absolute() or ".." in path.parts:
+        if _is_unsafe_path(value):
             raise ValueError(f"caminho deve ser relativo ao projeto: {value}")
-        result.append(path.as_posix())
+        result.append(Path(value).as_posix())
     return result
 
 
@@ -378,7 +390,7 @@ def observe_tool_event(root: Path, payload: dict[str, Any]) -> dict[str, Any] | 
     files = observation.setdefault("files", [])
     for value in candidates if isinstance(candidates, list) else []:
         candidate = Path(str(value))
-        if not candidate.is_absolute() and ".." not in candidate.parts and candidate.as_posix() not in files:
+        if not _is_unsafe_path(str(value)) and candidate.as_posix() not in files:
             files.append(candidate.as_posix())
     _save_session_state(path, state)
     return observation
@@ -1075,7 +1087,7 @@ def evaluate_proposal(
 def _results_path(root: Path, value: str) -> Path:
     root = Path(os.path.abspath(root))
     path = Path(value)
-    if path.is_absolute() or ".." in path.parts:
+    if _is_unsafe_path(value):
         raise ValueError("arquivo de resultados deve estar dentro do projeto")
     resolved = Path(os.path.abspath(root / path))
     relative = Path(os.path.relpath(resolved, root))

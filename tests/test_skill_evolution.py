@@ -938,6 +938,39 @@ class SkillEvolutionTest(unittest.TestCase):
                 third["updated_suggestions"],
             )
 
+    def test_recusa_caminho_inseguro_com_qualquer_separador_em_qualquer_sistema(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._project_with_skills(root, "billing")
+            unsafe = ("..\\segredo.txt", "../segredo.txt", "a/../b", "a\\..\\b", "C:\\x", "\\x", "/etc/x")
+            for value in unsafe:
+                with self.subTest(value=value):
+                    with self.assertRaises(ValueError):
+                        skill_evolution._relative_paths(root, [value])
+                    with self.assertRaises(ValueError):
+                        skill_evolution._results_path(root, value)
+            self.assertEqual(
+                ["src/a.py", "docs/b.md"], skill_evolution._relative_paths(root, ["src/a.py", "docs/b.md"])
+            )
+
+    def test_arquivos_observados_com_caminho_inseguro_sao_ignorados(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._project_with_skills(root, "billing")
+            skill_evolution.activate_skill(root, "billing", "s1")
+
+            observed = skill_evolution.observe_tool_event(
+                root,
+                {
+                    "session_id": "s1",
+                    "tool_use_id": "t1",
+                    "tool_name": "Read",
+                    "files": ["src/ok.py", "..\\fora.txt", "../fora.txt", "C:\\fora.txt"],
+                },
+            )
+
+            self.assertEqual(["src/ok.py"], observed["files"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
