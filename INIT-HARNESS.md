@@ -504,6 +504,12 @@ fatos observáveis.
 usa esse contexto como fallback quando o evento não repetir o nome da skill; a
 ativação não cria experiência sozinha e pode ser encerrada com `deactivate`.
 
+A ativação é automática: o hook `PreToolUse` com matcher `Skill` chama
+`skill_observe.py`, que ativa a skill invocada quando ela existe no catálogo do
+projeto (skills de plugins ou do usuário são ignoradas). Ao invocar outra skill na
+mesma sessão, a observação da anterior é fechada como experiência própria antes da
+troca, para que suas chamadas não sejam atribuídas à nova.
+
 Cada experiência registrada também cria um job `skill_experience_analysis` em
 `.init-harness/skills/queue/`. A fila é idempotente e persistente; hooks apenas
 registram o job, sem chamar modelos ou bloquear a sessão. O worker econômico será

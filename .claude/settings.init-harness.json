@@ -50,6 +50,17 @@
             "timeout": 60
           }
         ]
+      },
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv",
+            "args": ["run", "--no-project", "--python", ">=3.10", "${CLAUDE_PROJECT_DIR}/.claude/hooks/skill_observe.py"],
+            "timeout": 30
+          }
+        ]
       }
     ],
     "PostToolUse": [

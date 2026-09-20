@@ -290,6 +290,34 @@ def active_skill(root: Path, session_id: str) -> dict[str, Any]:
     return {"session_id": session_id, "active_skill": state.get("active_skill")}
 
 
+def activate_from_tool_event(root: Path, payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Ativa a skill da sessão quando o cliente invoca a ferramenta Skill.
+
+    Só reage a PreToolUse da ferramenta Skill e a skills presentes no catálogo do
+    projeto; skills de outros escopos (plugins, usuário) são ignoradas. Ao trocar de
+    skill, a observação acumulada da anterior vira uma experiência própria antes da
+    troca, para que suas chamadas de ferramenta não sejam atribuídas à nova skill.
+    """
+    if str(payload.get("hook_event_name") or "") != "PreToolUse" or payload.get("tool_name") != "Skill":
+        return None
+    tool_input = payload.get("tool_input")
+    name = str((tool_input or {}).get("skill") or "").strip().lstrip("/") if isinstance(tool_input, dict) else ""
+    session_id = str(payload.get("session_id") or "").strip()
+    if not session_id or name not in _skill_ids(root):
+        return None
+    path, state = _load_session_state(root, session_id)
+    previous = state.get("active_skill")
+    observation = state.get("skill_observation")
+    if previous and previous != name and isinstance(observation, dict) and observation.get("skill") == previous:
+        consolidated = consolidate_hook_experience({"session_id": session_id, "active_skill": previous}, observation)
+        if consolidated is not None:
+            capture_hook_experience(root, {"session_id": session_id, "skill_experience": consolidated})
+        state.pop("skill_observation", None)
+        state.pop("skill_observation_seen", None)
+        _save_session_state(path, state)
+    return activate_skill(root, name, session_id)
+
+
 def observe_tool_event(root: Path, payload: dict[str, Any]) -> dict[str, Any] | None:
     """Acumula sinais objetivos de uma ferramenta no estado da sessão."""
     session_id = str(payload.get("session_id") or "").strip()

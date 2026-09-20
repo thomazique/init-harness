@@ -3,6 +3,7 @@
 ## Não lançado
 
 - Corrigido frontmatter das skills `commit` e `spec`, que começava com linha em branco e ficava sem `description` no catálogo e no cliente. Adicionado teste contra as skills reais do kit.
+- Adicionada ativação automática da skill da sessão: `PreToolUse` na ferramenta `Skill` chama `skill_observe.py`, que ativa skills do catálogo do projeto. Ao trocar de skill, a experiência da anterior é fechada antes da troca.
 
 ## 3.0.0 — evolução assíncrona de skills
 

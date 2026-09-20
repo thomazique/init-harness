@@ -544,6 +544,53 @@ class SkillEvolutionTest(unittest.TestCase):
                 self.assertEqual(item["id"], item["name"])
                 self.assertTrue(item["description"], "description vazia: o modelo não consegue acionar a skill")
 
+    def _project_with_skills(self, root: Path, *names: str) -> None:
+        for name in names:
+            skill = root / ".claude" / "skills" / name
+            skill.mkdir(parents=True)
+            (skill / "SKILL.md").write_text(f"---\nname: {name}\ndescription: {name}\n---\n", encoding="utf-8")
+
+    def test_ativa_skill_do_projeto_ao_invocar_ferramenta_skill(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._project_with_skills(root, "billing")
+            pre = {"session_id": "s1", "hook_event_name": "PreToolUse", "tool_name": "Skill"}
+
+            result = skill_evolution.activate_from_tool_event(root, {**pre, "tool_input": {"skill": "/billing"}})
+
+            self.assertEqual("billing", result["active_skill"])
+            self.assertEqual("billing", skill_evolution.active_skill(root, "s1")["active_skill"])
+            for ignored in (
+                {**pre, "tool_input": {"skill": "plugin:outra"}},
+                {**pre, "tool_input": {}},
+                {**pre, "tool_name": "Bash", "tool_input": {"skill": "billing"}},
+                {**pre, "hook_event_name": "PostToolUse", "tool_input": {"skill": "billing"}},
+                {**pre, "session_id": "", "tool_input": {"skill": "billing"}},
+            ):
+                self.assertIsNone(skill_evolution.activate_from_tool_event(root, ignored))
+
+    def test_trocar_de_skill_fecha_experiencia_da_anterior(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._project_with_skills(root, "billing", "reports")
+            pre = {"session_id": "s1", "hook_event_name": "PreToolUse", "tool_name": "Skill"}
+            skill_evolution.activate_from_tool_event(root, {**pre, "tool_input": {"skill": "billing"}})
+            for number in (1, 2):
+                skill_evolution.observe_tool_event(
+                    root, {"session_id": "s1", "tool_use_id": f"t{number}", "tool_name": "Read"}
+                )
+
+            skill_evolution.activate_from_tool_event(root, {**pre, "tool_input": {"skill": "reports"}})
+
+            closed = skill_evolution.read_experiences(root, "billing")
+            self.assertEqual(1, len(closed))
+            self.assertEqual("success", closed[0]["outcome"])
+            self.assertEqual(2, closed[0]["metrics"]["tool_calls"])
+            self.assertEqual("reports", skill_evolution.active_skill(root, "s1")["active_skill"])
+            fresh = skill_evolution.observe_tool_event(root, {"session_id": "s1", "tool_use_id": "t3", "tool_name": "Read"})
+            self.assertEqual(("reports", 1), (fresh["skill"], fresh["tool_calls"]))
+            self.assertEqual([], skill_evolution.read_experiences(root, "reports"))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
