@@ -102,6 +102,13 @@ def _job_file(root: Path, job_id: str) -> Path:
     return queue_path(root) / f"{job_id}.json"
 
 
+def _job_sequence(job: dict[str, Any]) -> int:
+    try:
+        return int(job.get("sequence") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _job_paths(root: Path) -> list[Path]:
     """Arquivos de job da fila; J-<id>.analysis.json e J-<id>.review.json são saídas de runners."""
     return sorted(path for path in queue_path(root).glob("J-*.json") if re.fullmatch(r"J-[0-9a-f]+\.json", path.name))
@@ -110,6 +117,7 @@ def _job_paths(root: Path) -> list[Path]:
 def enqueue_analysis_job(root: Path, event: dict[str, Any]) -> dict[str, Any]:
     """Adiciona um job idempotente para análise assíncrona da experiência."""
     queue_path(root).mkdir(parents=True, exist_ok=True)
+    sequence = 0
     for path in _job_paths(root):
         try:
             existing = json.loads(path.read_text(encoding="utf-8"))
@@ -117,6 +125,7 @@ def enqueue_analysis_job(root: Path, event: dict[str, Any]) -> dict[str, Any]:
             continue
         if existing.get("experience_event_id") == event.get("event_id"):
             return existing
+        sequence = max(sequence, _job_sequence(existing))
     job = {
         "job_id": "J-" + uuid.uuid4().hex[:12],
         "type": "skill_experience_analysis",
@@ -124,6 +133,7 @@ def enqueue_analysis_job(root: Path, event: dict[str, Any]) -> dict[str, Any]:
         "skill": event["skill"],
         "experience_event_id": event["event_id"],
         "experience": event,
+        "sequence": sequence + 1,
         "created_at": datetime.now(timezone.utc).isoformat(timespec="microseconds"),
         "attempts": 0,
     }
@@ -140,8 +150,9 @@ def read_jobs(root: Path, status: str | None = None) -> list[dict[str, Any]]:
             raise ValueError(f"job inválido em {path}") from exc
         if status is None or job.get("status") == status:
             jobs.append(job)
-    # O nome do arquivo é um UUID aleatório; a ordem de criação vem de created_at.
-    return sorted(jobs, key=lambda job: str(job.get("created_at") or ""))
+    # O nome do arquivo é um UUID aleatório e o relógio pode empatar (no Windows a resolução é grossa):
+    # a ordem de criação vem de `sequence`. Jobs anteriores a ela (sem o campo) vêm primeiro, por horário.
+    return sorted(jobs, key=lambda job: (_job_sequence(job), str(job.get("created_at") or "")))
 
 
 def update_job(root: Path, job_id: str, status: str, **updates: Any) -> dict[str, Any]:

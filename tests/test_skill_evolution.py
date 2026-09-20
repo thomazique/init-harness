@@ -9,6 +9,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / ".claude" / "hooks" / "skill_evolution.py"
 SPEC = importlib.util.spec_from_file_location("skill_evolution", MODULE_PATH)
@@ -970,6 +971,53 @@ class SkillEvolutionTest(unittest.TestCase):
             )
 
             self.assertEqual(["src/ok.py"], observed["files"])
+
+    def test_ordem_da_fila_nao_depende_da_resolucao_do_relogio(self) -> None:
+        from datetime import datetime as real_datetime
+
+        class Frozen:
+            """Relógio de baixa resolução: todo `now` cai no mesmo instante."""
+
+            @staticmethod
+            def now(tz=None):
+                return real_datetime(2026, 9, 20, 12, 0, 0, tzinfo=tz)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._project_with_skills(root, "billing")
+            with mock.patch.object(skill_evolution, "datetime", Frozen):
+                created = [
+                    skill_evolution.enqueue_analysis_job(root, {"event_id": f"E-{number}", "skill": "billing"})
+                    for number in range(12)
+                ]
+
+            self.assertEqual(1, len({job["created_at"] for job in created}), "o relógio empatou")
+            self.assertEqual(
+                [job["job_id"] for job in created], [job["job_id"] for job in skill_evolution.read_jobs(root)]
+            )
+            self.assertEqual(list(range(1, 13)), [job["sequence"] for job in skill_evolution.read_jobs(root)])
+
+    def test_jobs_anteriores_a_sequencia_vem_primeiro_e_a_numeracao_continua(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._project_with_skills(root, "billing")
+            queue = skill_evolution.queue_path(root)
+            queue.mkdir(parents=True)
+            legacy = {
+                "job_id": "J-0000000000aa",
+                "status": "queued",
+                "created_at": "2026-09-18T10:00:00+00:00",
+                "experience_event_id": "E-antigo",
+                "skill": "billing",
+            }
+            (queue / "J-0000000000aa.json").write_text(json.dumps(legacy), encoding="utf-8")
+
+            first = skill_evolution.enqueue_analysis_job(root, {"event_id": "E-novo", "skill": "billing"})
+
+            self.assertEqual(1, first["sequence"])
+            self.assertEqual(
+                ["J-0000000000aa", first["job_id"]], [job["job_id"] for job in skill_evolution.read_jobs(root)]
+            )
 
 
 if __name__ == "__main__":
