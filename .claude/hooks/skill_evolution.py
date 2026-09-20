@@ -20,7 +20,7 @@ from typing import Any
 
 REGISTRY_RELATIVE = Path(".init-harness") / "skills" / "registry.json"
 QUEUE_RELATIVE = Path(".init-harness") / "skills" / "queue"
-METHOD_SKILLS = {"init-harness", "spec", "pilares", "commit", "offboarding", "record"}
+METHOD_SKILLS = {"init-harness", "spec", "pilares", "commit", "offboarding", "record", "evolve"}
 OUTCOMES = {"success", "failure", "partial", "blocked"}
 SOURCES = {"agent", "human", "test", "system"}
 DEFAULT_EVALUATION_POLICY = {
@@ -772,6 +772,80 @@ def _save_proposal(path: Path, proposal: dict[str, Any]) -> None:
     path.write_text(json.dumps(proposal, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def proposal_context(root: Path, skill: str, proposal_id: str) -> dict[str, Any]:
+    """Reúne o que o autor de uma candidata precisa ler antes de editá-la; não altera nada."""
+    proposal, _ = _load_proposal(root, skill, proposal_id)
+    ids = set(proposal.get("evidence_event_ids") or [])
+    fields = ("event_id", "source", "outcome", "score", "failure_type", "summary", "human_correction", "tools", "files", "tags")
+    evidence = [
+        {key: event.get(key) for key in fields}
+        for event in read_experiences(root, skill)
+        if event.get("event_id") in ids
+    ]
+    active = root / ".claude" / "skills" / skill / "SKILL.md"
+    active_hash = sha256(active.read_text(encoding="utf-8", errors="replace").encode("utf-8")).hexdigest()
+    cases_dir = root / ".init-harness" / "skills" / skill / "eval" / "cases"
+    contract = usage_contract(root, skill)
+    return {
+        "proposal_id": proposal_id,
+        "skill": skill,
+        "status": proposal.get("status"),
+        "pattern": proposal.get("pattern"),
+        "rationale": proposal.get("rationale"),
+        "base_path": proposal["base_path"],
+        "candidate_path": proposal["candidate_path"],
+        "active_matches_base": active_hash == proposal.get("base_sha256"),
+        "candidate_changed": (root / proposal["candidate_path"]).read_bytes() != (root / proposal["base_path"]).read_bytes(),
+        "change_summary": proposal.get("change_summary"),
+        "evidence": evidence,
+        # Falha automática (source=system) só diz que houve falha, não o motivo.
+        "explained_evidence": sum(1 for item in evidence if item.get("source") != "system" or item.get("human_correction")),
+        "usage_contract": contract,
+        "usage_contract_ready": bool(contract.get("when")) and bool(str(contract.get("expected_outcome") or "").strip()),
+        "evaluation_policy": proposal.get("evaluation_policy") or evaluation_policy(root, skill),
+        "case_files": sorted(p.name for p in cases_dir.glob("*.json") if p.name != "schema.json") if cases_dir.is_dir() else [],
+    }
+
+
+def submit_candidate(root: Path, skill: str, proposal_id: str, summary: str) -> dict[str, Any]:
+    """Valida a candidata escrita para uma proposta e registra o que ela muda."""
+    summary = summary.strip()
+    if not summary:
+        raise ValueError("summary é obrigatório: descreva o que mudou e por quê")
+    proposal, path = _load_proposal(root, skill, proposal_id)
+    if proposal.get("status") in {"evaluated", "promoted", "conflict"}:
+        raise ValueError(f"proposta em status {proposal.get('status')} não aceita nova candidata; crie outra proposta")
+    active = root / ".claude" / "skills" / skill / "SKILL.md"
+    active_hash = sha256(active.read_text(encoding="utf-8", errors="replace").encode("utf-8")).hexdigest()
+    if active_hash != proposal.get("base_sha256"):
+        proposal["status"] = "conflict"
+        _save_proposal(path, proposal)
+        raise ValueError("skill ativa mudou desde a criação da proposta; recrie a proposta")
+    candidate = root / proposal["candidate_path"]
+    if not candidate.is_file():
+        raise ValueError(f"candidata ausente: {candidate}")
+    text = candidate.read_text(encoding="utf-8", errors="replace")
+    metadata = parse_frontmatter(text)
+    if metadata.get("name") != skill or not metadata.get("description"):
+        raise ValueError("candidata precisa de frontmatter na linha 1 com name igual à skill e description não vazia")
+    candidate_hash = sha256(text.encode("utf-8")).hexdigest()
+    if candidate_hash == proposal.get("base_sha256"):
+        raise ValueError("candidata não contém mudança em relação à skill ativa")
+    proposal["status"] = "candidate"
+    proposal["change_summary"] = summary
+    proposal["candidate_sha256"] = candidate_hash
+    proposal["candidate_submitted_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    proposal["evaluation"] = {"required": True, "regression_cases": [], "validation_score": None, "notes": None}
+    _save_proposal(path, proposal)
+    markdown = path.parent / "proposal.md"
+    if markdown.is_file():
+        head, marker, rest = markdown.read_text(encoding="utf-8").partition("## Mudança proposta\n\n")
+        _, separator, tail = rest.partition("\n\n## Avaliação obrigatória")
+        if marker and separator:
+            markdown.write_text(head + marker + summary + separator + tail, encoding="utf-8")
+    return proposal
+
+
 def evaluate_proposal(
     root: Path,
     skill: str,
@@ -1275,6 +1349,13 @@ def parser() -> argparse.ArgumentParser:
     propose.add_argument("skill")
     propose.add_argument("--suggestion", required=True)
     propose.add_argument("--owner", default=None)
+    context = commands.add_parser("proposal-context", help="Mostra evidências e limites para escrever a candidata.")
+    context.add_argument("skill")
+    context.add_argument("--proposal", required=True)
+    submit = commands.add_parser("submit-candidate", help="Valida a candidata escrita e registra o resumo da mudança.")
+    submit.add_argument("skill")
+    submit.add_argument("--proposal", required=True)
+    submit.add_argument("--summary", required=True)
     evaluate = commands.add_parser("evaluate", help="Registra avaliação de uma proposta candidata.")
     evaluate.add_argument("skill")
     evaluate.add_argument("--proposal", required=True)
@@ -1382,6 +1463,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "propose":
         print(json.dumps(create_proposal(root, args.skill, args.suggestion, args.owner), ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "proposal-context":
+        print(json.dumps(proposal_context(root, args.skill, args.proposal), ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "submit-candidate":
+        print(json.dumps(submit_candidate(root, args.skill, args.proposal, args.summary), ensure_ascii=False, indent=2))
         return 0
     if args.command == "evaluate":
         print(

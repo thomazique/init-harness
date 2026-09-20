@@ -617,6 +617,132 @@ class SkillEvolutionTest(unittest.TestCase):
             self.assertEqual(("reports", 1), (fresh["skill"], fresh["tool_calls"]))
             self.assertEqual([], skill_evolution.read_experiences(root, "reports"))
 
+    def _proposal(self, root: Path, *sources: str) -> dict:
+        """Cria a skill billing e uma proposta com uma falha recorrente por origem informada."""
+        self._project_with_skills(root, "billing")
+        for number, source in enumerate(sources or ("agent", "agent"), start=1):
+            skill_evolution.record_experience(
+                root,
+                skill_evolution.parser().parse_args(
+                    ["--root", str(root), "record", "billing", "--task-id", f"t{number}", "--outcome", "failure",
+                     "--summary", f"Fonte errada {number}.", "--failure-type", "wrong-source", "--source", source]
+                ),
+            )
+        suggestion = skill_evolution.read_suggestions(root, "billing")[0]
+        return skill_evolution.create_proposal(root, "billing", suggestion["suggestion_id"])
+
+    def _write_candidate(self, root: Path, proposal: dict, body: str) -> None:
+        (root / proposal["candidate_path"]).write_text(
+            f"---\nname: billing\ndescription: billing\n---\n{body}\n", encoding="utf-8"
+        )
+
+    def test_contexto_da_proposta_reune_evidencia_e_separa_falha_sem_explicacao(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "a"
+            proposal = self._proposal(root, "system", "system")
+
+            context = skill_evolution.proposal_context(root, "billing", proposal["proposal_id"])
+
+            self.assertEqual(2, len(context["evidence"]))
+            self.assertEqual(0, context["explained_evidence"])
+            self.assertTrue(context["active_matches_base"])
+            self.assertFalse(context["candidate_changed"])
+            self.assertFalse(context["usage_contract_ready"])
+            self.assertEqual([], context["case_files"])
+            other = Path(tmp) / "b"
+            mixed = self._proposal(other, "agent", "system")
+            mixed_context = skill_evolution.proposal_context(other, "billing", mixed["proposal_id"])
+            self.assertEqual(1, mixed_context["explained_evidence"])
+
+    def test_submete_candidata_valida_e_registra_o_resumo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proposal = self._proposal(root)
+            self._write_candidate(root, proposal, "# Billing\n\nConsulte a tabela invoices.")
+
+            submitted = skill_evolution.submit_candidate(
+                root, "billing", proposal["proposal_id"], "Aponta a tabela invoices (E-001, E-002)."
+            )
+
+            self.assertEqual("candidate", submitted["status"])
+            self.assertEqual("Aponta a tabela invoices (E-001, E-002).", submitted["change_summary"])
+            proposal_dir = (root / proposal["candidate_path"]).parents[1]
+            markdown = (proposal_dir / "proposal.md").read_text(encoding="utf-8")
+            self.assertIn("Aponta a tabela invoices", markdown)
+            self.assertNotIn("Preencher antes da avaliação", markdown)
+            self.assertIn("## Avaliação obrigatória", markdown)
+            context = skill_evolution.proposal_context(root, "billing", proposal["proposal_id"])
+            self.assertTrue(context["candidate_changed"])
+
+    def test_recusa_candidata_invalida_e_estados_que_nao_aceitam_nova_candidata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proposal = self._proposal(root)
+            pid = proposal["proposal_id"]
+            with self.assertRaisesRegex(ValueError, "não contém mudança"):
+                skill_evolution.submit_candidate(root, "billing", pid, "sem mudança")
+            with self.assertRaisesRegex(ValueError, "summary é obrigatório"):
+                skill_evolution.submit_candidate(root, "billing", pid, "   ")
+            (root / proposal["candidate_path"]).write_text("# sem frontmatter\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "frontmatter"):
+                skill_evolution.submit_candidate(root, "billing", pid, "x")
+            (root / proposal["candidate_path"]).write_text(
+                "---\nname: outra\ndescription: d\n---\n", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ValueError, "name igual à skill"):
+                skill_evolution.submit_candidate(root, "billing", pid, "x")
+
+            self._write_candidate(root, proposal, "# v2")
+            skill_evolution.submit_candidate(root, "billing", pid, "v2")
+            skill_evolution.evaluate_proposal(root, "billing", pid, 0.5, 0.9)
+            self._write_candidate(root, proposal, "# v3")
+            with self.assertRaisesRegex(ValueError, "não aceita nova candidata"):
+                skill_evolution.submit_candidate(root, "billing", pid, "v3")
+
+    def test_candidata_rejeitada_pode_ser_revisada_e_ressubmetida(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proposal = self._proposal(root)
+            pid = proposal["proposal_id"]
+            self._write_candidate(root, proposal, "# v2")
+            skill_evolution.submit_candidate(root, "billing", pid, "v2")
+            rejected = skill_evolution.evaluate_proposal(root, "billing", pid, 0.9, 0.5)
+            self.assertEqual("rejected", rejected["status"])
+
+            self._write_candidate(root, proposal, "# v3")
+            again = skill_evolution.submit_candidate(root, "billing", pid, "v3 corrige a regressão")
+            self.assertEqual("candidate", again["status"])
+            self.assertNotIn("baseline_score", again["evaluation"], "avaliação anterior deve ser descartada")
+            evaluated = skill_evolution.evaluate_proposal(root, "billing", pid, 0.5, 0.9)
+            promoted = skill_evolution.accept_proposal(root, "billing", pid)
+
+            self.assertEqual("evaluated", evaluated["status"])
+            self.assertEqual("promoted", promoted["status"])
+            active = (root / ".claude/skills/billing/SKILL.md").read_text(encoding="utf-8")
+            self.assertIn("# v3", active)
+
+    def test_submissao_detecta_skill_ativa_alterada(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proposal = self._proposal(root)
+            self._write_candidate(root, proposal, "# v2")
+            (root / ".claude/skills/billing/SKILL.md").write_text(
+                "---\nname: billing\ndescription: billing\n---\n# mudou por fora\n", encoding="utf-8"
+            )
+
+            with self.assertRaisesRegex(ValueError, "skill ativa mudou"):
+                skill_evolution.submit_candidate(root, "billing", proposal["proposal_id"], "v2")
+
+            context = skill_evolution.proposal_context(root, "billing", proposal["proposal_id"])
+            self.assertFalse(context["active_matches_base"])
+            self.assertEqual("conflict", skill_evolution.read_proposals(root, "billing")[0]["status"])
+
+    def test_todas_as_skills_do_kit_sao_classificadas_como_metodo(self) -> None:
+        kit = MODULE_PATH.parents[2]
+        for item in skill_evolution.discover_skills(kit):
+            with self.subTest(skill=item["id"]):
+                self.assertEqual("method", item["scope"], "registre a skill em METHOD_SKILLS")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

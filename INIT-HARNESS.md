@@ -422,6 +422,7 @@ A camada que permanece no modo `cliente` precisa operar sem este arquivo. O offb
 | `pilares` | Implantação, antes de frente grande, mudança de tier |
 | `commit` | Commit, branch ou PR |
 | `record` | Registro de experiência relevante para evolução de skill |
+| `evolve` | Sugestão ou proposta de skill sem candidata escrita |
 | `offboarding` | Encerramento de implantação em modo `cliente` |
 
 Diagnóstico da instalação: `uv run --no-project --python ">=3.10" .claude/hooks/doctor.py`.
@@ -443,6 +444,8 @@ python .claude/hooks/skill_evolution.py experiences <skill> --limit 20
 python .claude/hooks/skill_evolution.py suggestions <skill>
 python .claude/hooks/skill_evolution.py propose <skill> --suggestion <S-ID> --owner <identificador>
 python .claude/hooks/skill_evolution.py proposals <skill>
+python .claude/hooks/skill_evolution.py proposal-context <skill> --proposal <P-ID>
+python .claude/hooks/skill_evolution.py submit-candidate <skill> --proposal <P-ID> --summary "o que mudou e por quê"
 python .claude/hooks/skill_evolution.py evaluate <skill> --proposal <P-ID> --baseline-score 0.70 --candidate-score 0.82
 python .claude/hooks/skill_evolution.py evaluate-results <skill> --proposal <P-ID> --results eval/results.json
 python .claude/hooks/skill_evolution.py accept <skill> --proposal <P-ID>
@@ -464,7 +467,7 @@ python .claude/hooks/skill_evolution.py status
 ```
 
 `sync` escreve `.init-harness/skills/registry.json` e um `manifest.json` por skill.
-Skills `init-harness`, `spec`, `pilares`, `commit`, `offboarding` e `record` são classificadas
+Skills `init-harness`, `spec`, `pilares`, `commit`, `offboarding`, `record` e `evolve` são classificadas
 como método; as demais são classificadas como skills próprias do projeto. O catálogo
 preserva versão, status, risco e data da última avaliação para as próximas etapas de
 proposta e avaliação.
@@ -532,6 +535,14 @@ Uma sugestão pode ser materializada como proposta com `propose`. Isso cria um
 diretório versionável em `.init-harness/skills/<skill>/proposals/`, contendo o
 manifesto JSON, o hash da skill ativa, as evidências vinculadas e um checklist de
 avaliação. A criação da proposta não modifica o `SKILL.md`.
+
+A candidata é escrita pela skill `evolve`. `proposal-context` reúne a evidência
+vinculada, a política de avaliação, o contrato de uso e os casos existentes.
+`submit-candidate` valida a candidata (frontmatter na linha 1, `name` igual à skill,
+diferente da base, skill ativa intacta), grava o resumo da mudança na proposta e a
+marca como `candidate`. Falha automática (`source=system`) não explica o motivo:
+sem evidência explicada, a skill não edita e pede um `/record` com o fato observado.
+A promoção continua exclusiva de `accept`, que exige a candidata idêntica à avaliada.
 
 `evaluate` exige que a candidata tenha frontmatter válido, seja diferente da base,
 melhore o score, não tenha regressões e não tenha falhas de guardrail. Se aprovada,

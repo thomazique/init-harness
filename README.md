@@ -110,6 +110,10 @@ O worker econômico pode propor análises, mas não promove skills. O revisor ca
 as evidências, e a promoção continua dependendo de uma decisão humana explícita.
 Experiências não capturam prompts, credenciais ou raciocínio privado.
 
+A candidata de uma proposta é escrita pela skill `/evolve`: ela lê a evidência
+(`proposal-context`), edita somente a cópia candidata, registra o resumo
+(`submit-candidate`) e leva a proposta até a avaliação. Nunca promove a skill.
+
 ## Segurança
 
 Os hooks reduzem risco, mas não substituem sandbox, proteção de branch,

@@ -47,6 +47,7 @@ MANAGED_TREES = (
     ".claude/skills/pilares",
     ".claude/skills/spec",
     ".claude/skills/record",
+    ".claude/skills/evolve",
 )
 PROJECT_TEMPLATES = {
     "CLAUDE.md": ".claude/skills/init-harness/templates/CLAUDE.template.md",

@@ -116,6 +116,18 @@ class InstallerTest(unittest.TestCase):
             self.assertEqual(1, doctor.returncode, doctor.stdout)
             self.assertIn("matcher Skill", doctor.stdout)
 
+    def test_toda_skill_do_kit_esta_nas_listas_de_metodo_do_instalador(self) -> None:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("kit_lib", KIT / ".claude/hooks/_lib.py")
+        assert spec is not None and spec.loader is not None
+        lib = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(lib)
+        for skill in sorted((KIT / ".claude/skills").iterdir()):
+            with self.subTest(skill=skill.name):
+                self.assertIn(f".claude/skills/{skill.name}", init_harness.MANAGED_TREES)
+                self.assertIn(f".claude/skills/{skill.name}/", lib.METODO_CLIENTE)
+
     def test_upgrade_migra_nomes_legados(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "legado"
