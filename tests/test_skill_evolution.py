@@ -532,6 +532,18 @@ class SkillEvolutionTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     skill_evolution.record_experience(root, args)
 
+    def test_skills_reais_do_kit_tem_frontmatter_legivel(self) -> None:
+        kit = MODULE_PATH.parents[2]
+        skills = skill_evolution.discover_skills(kit)
+
+        self.assertGreaterEqual(len(skills), 5)
+        for item in skills:
+            with self.subTest(skill=item["id"]):
+                text = (kit / item["skill_path"]).read_text(encoding="utf-8")
+                self.assertTrue(text.startswith("---"), "frontmatter deve começar na linha 1")
+                self.assertEqual(item["id"], item["name"])
+                self.assertTrue(item["description"], "description vazia: o modelo não consegue acionar a skill")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

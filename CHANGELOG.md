@@ -1,5 +1,9 @@
 # Changelog
 
+## Não lançado
+
+- Corrigido frontmatter das skills `commit` e `spec`, que começava com linha em branco e ficava sem `description` no catálogo e no cliente. Adicionado teste contra as skills reais do kit.
+
 ## 3.0.0 — evolução assíncrona de skills
 
 - Adicionado catálogo local de skills com manifestos, experiências, sugestões, propostas, avaliações e promoção versionada.
