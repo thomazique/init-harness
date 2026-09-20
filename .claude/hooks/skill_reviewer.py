@@ -15,10 +15,13 @@ import skill_evolution as E  # noqa: E402
 
 
 def review_once(root: Path, runner_file: str, timeout: int) -> dict | None:
+    E.recover_stale_jobs(root)
     jobs = E.read_jobs(root, "review_required")
     if not jobs:
         return None
-    job = E.update_job(root, jobs[0]["job_id"], "processing")
+    job = E.update_job(
+        root, jobs[0]["job_id"], "processing", review_attempts=int(jobs[0].get("review_attempts") or 0) + 1
+    )
     try:
         runner = E._results_path(root, runner_file)
     except ValueError:

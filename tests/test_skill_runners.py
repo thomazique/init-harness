@@ -657,5 +657,164 @@ class QueueToProposalTest(unittest.TestCase):
             self.assertEqual("ana", E.read_proposals(root, "billing")[0]["owner"])
 
 
+class JobRecoveryTest(unittest.TestCase):
+    """Job failed, worker morto no meio, lock velho e gravação interrompida."""
+
+    WORKER = f"{RUNNER_PATH}/worker_static.py"
+
+    def fake_reviewer(self, root: Path, body: str) -> str:
+        path = root / "fake_reviewer.py"
+        path.write_text(
+            "import argparse, json, sys\n"
+            "p = argparse.ArgumentParser()\n"
+            "for a in ('--job', '--analysis', '--output', '--root'): p.add_argument(a)\n"
+            "a = p.parse_args()\n" + body,
+            encoding="utf-8",
+        )
+        return "fake_reviewer.py"
+
+    def age_job(self, root: Path, job_id: str, seconds: float) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        path = E._job_file(root, job_id)
+        job = json.loads(path.read_text(encoding="utf-8"))
+        job["updated_at"] = (datetime.now(timezone.utc) - timedelta(seconds=seconds)).isoformat(timespec="seconds")
+        path.write_text(json.dumps(job), encoding="utf-8")
+
+    def test_job_que_falhou_na_analise_volta_para_a_fila_e_e_processado(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = project(tmp)
+            record(root, "t1", "failure", "agent")
+            failed = skill_worker.process_once(root, "nao_existe.py", 60)
+            self.assertEqual("failed", failed["status"])
+
+            (retried,) = E.retry_jobs(root, failed["job_id"])
+
+            self.assertEqual(("queued", 1), (retried["status"], retried["retries"]))
+            self.assertNotIn("error", retried)
+            self.assertIn("runner inválido", retried["last_error"])
+            self.assertEqual("review_required", skill_worker.process_once(root, self.WORKER, 60)["status"])
+
+    def test_job_que_falhou_na_revisao_volta_para_a_revisao_com_a_analise(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = project(tmp)
+            record(root, "t1", "failure", "agent")
+            skill_worker.process_once(root, self.WORKER, 60)
+            broken = skill_reviewer.review_once(root, self.fake_reviewer(root, "sys.exit(3)\n"), 60)
+            self.assertEqual(("failed", 1), (broken["status"], broken["review_attempts"]))
+
+            (retried,) = E.retry_jobs(root)
+
+            self.assertEqual("review_required", retried["status"], "a análise do worker não se refaz")
+            self.assertEqual("needs_judgment", retried["analysis"]["classification"])
+            approve = self.fake_reviewer(root, "json.dump({'approved': True}, open(a.output, 'w'))\n")
+            done = skill_reviewer.review_once(root, approve, 60)
+            self.assertEqual(("review_approved", 2), (done["status"], done["review_attempts"]))
+
+    def test_so_job_failed_pode_ser_reprocessado(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = project(tmp)
+            record(root, "t1", "failure", "agent")
+            (queued,) = E.read_jobs(root)
+
+            with self.assertRaisesRegex(ValueError, "só job failed.*queued"):
+                E.retry_jobs(root, queued["job_id"])
+            with self.assertRaisesRegex(ValueError, "job não encontrado"):
+                E.retry_jobs(root, "J-inexistente")
+            self.assertEqual([], E.retry_jobs(root), "sem nenhum failed, --all não faz nada")
+
+    def test_job_processing_sem_worker_e_recuperado_e_pode_ser_reenfileirado(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = project(tmp)
+            record(root, "t1", "failure", "agent")
+            record(root, "t2", "failure", "agent")
+            dead = E.claim_next_job(root)
+            (alive,) = E.read_jobs(root, "queued")
+            E.update_job(root, alive["job_id"], "processing")
+            self.age_job(root, dead["job_id"], 7200)
+
+            recovered = E.recover_stale_jobs(root)
+
+            self.assertEqual([dead["job_id"]], recovered)
+            by_id = {job["job_id"]: job for job in E.read_jobs(root)}
+            self.assertEqual("failed", by_id[dead["job_id"]]["status"])
+            self.assertIn("interrompido", by_id[dead["job_id"]]["error"])
+            self.assertEqual("processing", by_id[alive["job_id"]]["status"], "job recente não é tocado")
+            (retried,) = E.retry_jobs(root, dead["job_id"])
+            self.assertEqual("queued", retried["status"])
+            self.assertNotIn("recovered", retried)
+
+    def test_worker_e_revisor_recuperam_jobs_orfaos_sozinhos(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = project(tmp)
+            record(root, "t1", "failure", "agent")
+            record(root, "t2", "failure", "agent")
+            orphan = E.claim_next_job(root)
+            self.age_job(root, orphan["job_id"], 7200)
+
+            processed = skill_worker.process_once(root, self.WORKER, 60)
+
+            self.assertEqual("review_required", processed["status"])
+            self.assertNotEqual(orphan["job_id"], processed["job_id"])
+            self.assertEqual("failed", next(j for j in E.read_jobs(root) if j["job_id"] == orphan["job_id"])["status"])
+            other = processed["job_id"]
+            E.update_job(root, other, "processing")
+            self.age_job(root, other, 7200)
+
+            self.assertIsNone(skill_reviewer.review_once(root, "qualquer.py", 60))
+            self.assertEqual("failed", next(j for j in E.read_jobs(root) if j["job_id"] == other)["status"])
+
+    def test_lock_de_worker_morto_nao_bloqueia_a_fila_para_sempre(self) -> None:
+        import os
+        import time
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = project(tmp)
+            record(root, "t1", "success")
+            lock = E.queue_path(root) / ".worker.lock"
+            lock.write_text("", encoding="utf-8")
+            self.assertIsNone(skill_worker.process_once(root, self.WORKER, 60), "lock recente pertence a outro worker")
+
+            old = time.time() - 3600
+            os.utime(lock, (old, old))
+            processed = skill_worker.process_once(root, self.WORKER, 60)
+
+            self.assertEqual("analyzed", processed["status"])
+            self.assertFalse(lock.exists(), "o lock é liberado ao final")
+
+    def test_gravacao_de_job_e_atomica_e_arquivo_temporario_nao_vira_job(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = project(tmp)
+            record(root, "t1", "failure", "agent")
+            (job,) = E.read_jobs(root)
+            E.update_job(root, job["job_id"], "processing")
+            E.update_job(root, job["job_id"], "queued")
+            self.assertFalse([p for p in E.queue_path(root).iterdir() if p.name.endswith(".tmp")], "sem resíduo")
+
+            (E.queue_path(root) / f"{job['job_id']}.json.tmp").write_text("{truncado", encoding="utf-8")
+
+            self.assertEqual([job["job_id"]], [item["job_id"] for item in E.read_jobs(root)], "o .tmp não é um job")
+
+    def test_cli_retry_job_e_recover_jobs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = project(tmp)
+            record(root, "t1", "failure", "agent")
+            failed = skill_worker.process_once(root, "nao_existe.py", 60)
+
+            def run(*argv: str) -> dict | list:
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    E.main(["--root", str(root), *argv])
+                return json.loads(out.getvalue())
+
+            with self.assertRaises(SystemExit):
+                run("retry-job")
+            with self.assertRaises(SystemExit):
+                run("retry-job", failed["job_id"], "--all")
+            self.assertEqual({"recovered": []}, run("recover-jobs"))
+            (retried,) = run("retry-job", "--all")
+            self.assertEqual((failed["job_id"], "queued"), (retried["job_id"], retried["status"]))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

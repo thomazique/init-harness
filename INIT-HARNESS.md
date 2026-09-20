@@ -463,6 +463,9 @@ python .claude/hooks/skill_evolution.py jobs --status queued
 python .claude/hooks/skill_worker.py --runner .claude/skills/evolve/runners/worker_static.py --once
 python .claude/hooks/skill_reviewer.py --runner .claude/skills/evolve/runners/reviewer_claude.py --once
 python .claude/hooks/skill_evolution.py review-job <J-ID> --decision approved --note "revisado"
+python .claude/hooks/skill_evolution.py retry-job <J-ID>
+python .claude/hooks/skill_evolution.py retry-job --all
+python .claude/hooks/skill_evolution.py recover-jobs --older-than 1800
 python .claude/hooks/skill_evolution.py status
 ```
 
@@ -530,7 +533,7 @@ Ciclo de um job (`status` mostra a contagem de cada estado):
 | Status | Significa | Depois |
 |---|---|---|
 | `queued` | Experiência registrada, aguardando o worker | `processing` |
-| `processing` | Um runner está trabalhando nele | resultado do runner |
+| `processing` | Um runner está trabalhando nele | resultado do runner; parado há mais de 30 min vira `failed` |
 | `analyzed` | O worker concluiu que não exige julgamento | encerrado |
 | `review_required` | O worker pede o revisor caro | `processing` |
 | `review_approved` | O revisor considera que a evidência sustenta uma proposta | decisão humana |
@@ -538,7 +541,15 @@ Ciclo de um job (`status` mostra a contagem de cada estado):
 | `rejected` | Descartado pelo revisor ou pelo humano | encerrado |
 | `approved` | O humano aprovou; a proposta já foi aberta (`proposal_id`, `suggestion_id`) | `promoted` |
 | `promoted` | A proposta vinculada foi promovida (`promoted_version`) | encerrado |
-| `failed` | Runner com erro, timeout ou saída inválida (`error`) | sem reenfileiramento automático |
+| `failed` | Runner com erro, timeout, saída inválida ou worker encerrado (`error`) | `retry-job` |
+
+`retry-job <job_id>` (ou `--all`) devolve um job `failed` à fila: para `review_required` se o worker já
+o havia analisado (falhou na revisão) e para `queued` se não. O erro anterior fica em `last_error` e
+`retries` conta as tentativas. Um job `processing` sem atualização há mais de 30 minutos perdeu o
+worker (encerrado à força, queda de energia): `recover-jobs [--older-than <segundos>]` o marca `failed`, e o
+worker e o revisor fazem isso sozinhos antes de pegar o próximo job. Um `.worker.lock` com mais de
+60 segundos é resto de um worker morto (o lock só cobre a escolha do job) e é ignorado. Os arquivos de job
+são gravados por arquivo temporário e `replace`, então uma queda não deixa JSON truncado na fila.
 
 `review-job --decision approved --note "..." [--owner <quem>]` só vale para `review_approved`
 ou `human_required`. Aprovar abre uma proposta em rascunho: reusa a sugestão aberta que contém
