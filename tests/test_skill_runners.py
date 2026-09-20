@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import json
 import shutil
 import subprocess
@@ -402,6 +404,152 @@ class ReviewerClaudeTest(unittest.TestCase):
         with mock.patch.object(reviewer_claude.shutil, "which", return_value=None), \
                 self.assertRaisesRegex(RuntimeError, "não encontrado no PATH"):
             reviewer_claude.call_model("p", 5)
+
+class QueueToProposalTest(unittest.TestCase):
+    """A decisão humana sobre um job abre a proposta, e promover a proposta promove o job."""
+
+    APPROVED = "json.dump({'approved': True}, open(a.output, 'w'))\n"
+
+    def ready_jobs(self, root: Path, *tasks: str, failure_type: str = "wrong-source") -> list[str]:
+        """Registra falhas explicadas e leva cada job até review_approved."""
+        for task in tasks:
+            record(root, task, "failure", "agent", "--failure-type", failure_type)
+        path = root / "approve.py"
+        path.write_text(
+            "import argparse, json\np = argparse.ArgumentParser()\n"
+            "for a in ('--job', '--analysis', '--output', '--root'): p.add_argument(a)\n"
+            "a = p.parse_args()\n" + self.APPROVED,
+            encoding="utf-8",
+        )
+        for _ in tasks:
+            assert skill_worker.process_once(root, f"{RUNNER_PATH}/worker_static.py", 60)
+        for _ in tasks:
+            assert skill_reviewer.review_once(root, "approve.py", 60)
+        return [job["job_id"] for job in E.read_jobs(root, "review_approved")]
+
+    def promote(self, root: Path, proposal_id: str) -> None:
+        proposal = next(item for item in E.read_proposals(root, "billing") if item["proposal_id"] == proposal_id)
+        candidate = root / proposal["candidate_path"]
+        candidate.write_text(BASE_SKILL + "\nConfira a fonte.\n", encoding="utf-8")
+        E.submit_candidate(root, "billing", proposal_id, "Manda conferir a fonte.")
+        E.evaluate_proposal(root, "billing", proposal_id, 0.5, 0.9)
+        E.accept_proposal(root, "billing", proposal_id)
+
+    def test_aprovar_falha_isolada_cria_a_sugestao_e_a_proposta(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = project(tmp)
+            (job_id,) = self.ready_jobs(root, "t1")
+            self.assertEqual([], E.read_suggestions(root, "billing"), "uma falha isolada não passa do limiar")
+
+            decided = E.decide_job(root, job_id, "approved", "evidência sólida", "thomaz")
+
+            suggestion = E.read_suggestions(root, "billing")[0]
+            (proposal,) = E.read_proposals(root, "billing")
+            self.assertEqual("approved", decided["status"])
+            self.assertEqual((suggestion["suggestion_id"], proposal["proposal_id"]), (decided["suggestion_id"], decided["proposal_id"]))
+            self.assertEqual(("review", "in_progress"), (suggestion["origin"], suggestion["status"]))
+            self.assertEqual([decided["experience_event_id"]], suggestion["evidence_event_ids"])
+            self.assertEqual(("draft", "thomaz"), (proposal["status"], proposal["owner"]))
+            self.assertIn("Nunca apague dados", (root / ".claude/skills/billing/SKILL.md").read_text(encoding="utf-8"))
+
+    def test_jobs_do_mesmo_padrao_compartilham_sugestao_e_proposta(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = project(tmp)
+            first, second = self.ready_jobs(root, "t1", "t2")
+
+            one = E.decide_job(root, first, "approved", "ok")
+            two = E.decide_job(root, second, "approved", "ok também")
+
+            self.assertEqual(one["proposal_id"], two["proposal_id"])
+            self.assertEqual(one["suggestion_id"], two["suggestion_id"])
+            self.assertEqual(1, len(E.read_proposals(root, "billing")))
+            self.assertEqual(1, len(E.read_suggestions(root, "billing")))
+
+    def test_rejeitar_nao_cria_proposta(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = project(tmp)
+            (job_id,) = self.ready_jobs(root, "t1")
+
+            decided = E.decide_job(root, job_id, "rejected", "não procede")
+
+            self.assertEqual("rejected", decided["status"])
+            self.assertNotIn("proposal_id", decided)
+            self.assertEqual([], E.read_proposals(root, "billing"))
+            self.assertEqual([], E.read_suggestions(root, "billing"))
+
+    def test_promover_a_proposta_promove_somente_os_jobs_vinculados(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = project(tmp)
+            first, second = self.ready_jobs(root, "t1", "t2")
+            other = self.ready_jobs(root, "t3", failure_type="outro-tipo")[-1]
+            linked = [E.decide_job(root, job, "approved", "ok") for job in (first, second)]
+            unrelated = E.decide_job(root, other, "approved", "ok")
+            self.assertNotEqual(linked[0]["proposal_id"], unrelated["proposal_id"])
+
+            self.promote(root, linked[0]["proposal_id"])
+
+            statuses = {job["job_id"]: job["status"] for job in E.read_jobs(root)}
+            self.assertEqual("promoted", statuses[first])
+            self.assertEqual("promoted", statuses[second])
+            self.assertEqual("approved", statuses[other], "outra proposta, outro destino")
+            promoted = next(job for job in E.read_jobs(root) if job["job_id"] == first)
+            self.assertEqual(2, promoted["promoted_version"])
+            self.assertEqual(2, E.evolution_status(root)["promoted"])
+
+    def test_aprovar_job_de_experiencia_ja_promovida_falha_e_o_job_continua_decidivel(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = project(tmp)
+            first, _, third = self.ready_jobs(root, "t1", "t2", "t3")
+            approved = E.decide_job(root, first, "approved", "ok")
+            self.promote(root, approved["proposal_id"])
+            before = next(job for job in E.read_jobs(root) if job["job_id"] == third)
+
+            with self.assertRaisesRegex(ValueError, "já foi tratada pela sugestão"):
+                E.decide_job(root, third, "approved", "tarde demais")
+
+            after = next(job for job in E.read_jobs(root) if job["job_id"] == third)
+            self.assertEqual(before, after)
+            self.assertEqual("review_approved", after["status"])
+            self.assertNotIn("human_decision", after)
+            self.assertEqual("rejected", E.decide_job(root, third, "rejected", "já coberto")["status"])
+
+    def test_falha_ao_criar_a_proposta_nao_registra_a_decisao(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = project(tmp)
+            (job_id,) = self.ready_jobs(root, "t1")
+            (root / ".claude/skills/billing/SKILL.md").unlink()
+
+            with self.assertRaisesRegex(ValueError, "skill não encontrada"):
+                E.decide_job(root, job_id, "approved", "ok")
+
+            job = E.read_jobs(root)[0]
+            self.assertEqual("review_approved", job["status"])
+            self.assertNotIn("human_decision", job)
+
+    def test_job_corrompido_na_fila_nao_desfaz_uma_promocao(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = project(tmp)
+            (job_id,) = self.ready_jobs(root, "t1")
+            approved = E.decide_job(root, job_id, "approved", "ok")
+            (E.queue_path(root) / "J-abcdef123456.json").write_text("{quebrado", encoding="utf-8")
+
+            self.promote(root, approved["proposal_id"])
+
+            self.assertEqual("promoted", E.read_proposals(root, "billing")[0]["status"])
+            self.assertIn("Confira a fonte", (root / ".claude/skills/billing/SKILL.md").read_text(encoding="utf-8"))
+
+    def test_cli_review_job_aceita_owner_e_devolve_o_vinculo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = project(tmp)
+            (job_id,) = self.ready_jobs(root, "t1")
+            out = io.StringIO()
+
+            with contextlib.redirect_stdout(out):
+                E.main(["--root", str(root), "review-job", job_id, "--decision", "approved", "--note", "ok", "--owner", "ana"])
+
+            printed = json.loads(out.getvalue())
+            self.assertEqual("approved", printed["status"])
+            self.assertEqual("ana", E.read_proposals(root, "billing")[0]["owner"])
 
 
 if __name__ == "__main__":

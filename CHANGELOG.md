@@ -2,6 +2,7 @@
 
 ## Não lançado
 
+- Ligada a fila às propostas: `review-job --decision approved` abre a proposta de evolução (reusando ou criando a sugestão da experiência), o job guarda `proposal_id` e `suggestion_id`, e `accept` marca os jobs vinculados como `promoted`. A decisão não é gravada se a proposta não puder ser criada. `review-job` ganhou `--owner`; o ciclo de status dos jobs está documentado no `INIT-HARNESS.md`.
 - Corrigida a listagem da fila: `J-<id>.analysis.json` e `.review.json`, saídas dos runners gravadas na mesma pasta, eram lidos como jobs e apareciam em `jobs` e no `total` de `status` sem `job_id` nem `status`.
 - Corrigido o destino de um job cujo revisor sinaliza `needs_human: true`: ele era marcado `rejected` e sumia entre os rejeitados. Passa ao novo status `human_required`, que `review-job` aceita, junto com `review_approved`. `status` agora também conta `analyzed`, `human_required` e `promoted`.
 - Sugestões de evolução passam a ser vivas: novas ocorrências do padrão atualizam `occurrences` e `evidence_event_ids` em vez de ficarem congeladas na primeira. A sugestão ganha ciclo de vida (`proposed`, `in_progress`, `addressed`); depois de promovida, só ocorrências posteriores abrem uma nova. `record` informa também `updated_suggestions`.

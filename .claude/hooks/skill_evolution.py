@@ -188,7 +188,12 @@ def claim_next_job(root: Path) -> dict[str, Any] | None:
         lock.unlink(missing_ok=True)
 
 
-def decide_job(root: Path, job_id: str, decision: str, note: str) -> dict[str, Any]:
+def decide_job(root: Path, job_id: str, decision: str, note: str, owner: str | None = None) -> dict[str, Any]:
+    """Registra a decisão humana; aprovar também abre a proposta de evolução da skill.
+
+    A proposta é só um rascunho (nada altera a skill ativa). Se a criação falhar, a decisão
+    não é gravada e o job continua decidível.
+    """
     if decision not in {"approved", "rejected"}:
         raise ValueError("decisão deve ser approved ou rejected")
     if not note.strip():
@@ -196,12 +201,12 @@ def decide_job(root: Path, job_id: str, decision: str, note: str) -> dict[str, A
     current = next((job for job in read_jobs(root) if job.get("job_id") == job_id), None)
     if current is None or current.get("status") not in {"review_approved", "human_required"}:
         raise ValueError("job precisa estar em review_approved ou human_required para decisão humana")
-    return update_job(
-        root,
-        job_id,
-        decision,
-        human_decision={"note": note.strip(), "at": datetime.now(timezone.utc).isoformat(timespec="seconds")},
-    )
+    updates: dict[str, Any] = {"human_decision": {"note": note.strip(), "at": _now()}}
+    if decision == "approved":
+        suggestion = _suggestion_for_event(root, current["skill"], current["experience"])
+        proposal = create_proposal(root, current["skill"], suggestion["suggestion_id"], owner)
+        updates.update(suggestion_id=suggestion["suggestion_id"], proposal_id=proposal["proposal_id"])
+    return update_job(root, job_id, decision, **updates)
 
 
 def evolution_status(root: Path) -> dict[str, Any]:
@@ -748,6 +753,47 @@ def identify_suggestions(root: Path, skill: str) -> list[dict[str, Any]]:
     return created
 
 
+def _suggestion_for_event(root: Path, skill: str, event: dict[str, Any]) -> dict[str, Any]:
+    """Sugestão aberta que contém a experiência; sem ela, a decisão humana a cria.
+
+    Uma falha isolada não atinge o limiar automático, mas um humano ter aprovado o job vale
+    como evidência suficiente para abrir a proposta.
+    """
+    event_id = event["event_id"]
+    rows = read_suggestions(root, skill)
+    holder = next((row for row in rows if event_id in row.get("evidence_event_ids", [])), None)
+    if holder is not None:
+        if holder.get("status") == "addressed":
+            raise ValueError(
+                f"a experiência já foi tratada pela sugestão {holder['suggestion_id']}, promovida; "
+                "aguarde uma nova ocorrência"
+            )
+        return holder
+    by_id = {item["event_id"]: item for item in read_experiences(root, skill) if item.get("event_id")}
+    by_id.setdefault(event_id, event)
+    pattern = _suggestion_key(event)
+    versions = [row for row in rows if row.get("pattern") == pattern]
+    if versions and versions[-1].get("status") != "addressed":
+        target = versions[-1]
+        _refresh_suggestion(target, [event], by_id)
+    else:
+        target = _build_suggestion(skill, pattern, [event], generation=len(versions), origin="review")
+        rows.append(target)
+    _write_suggestions(root, skill, rows)
+    return target
+
+
+def _mark_jobs_promoted(root: Path, proposal_id: str, version: int) -> None:
+    """Contabilidade pós-promoção: não pode desfazer nem falhar uma promoção já aplicada."""
+    try:
+        jobs = read_jobs(root, "approved")
+    except ValueError:
+        return
+    for job in jobs:
+        if job.get("proposal_id") == proposal_id:
+            update_job(root, job["job_id"], "promoted", promoted_version=version)
+
+
 def _set_suggestion_status(root: Path, skill: str, suggestion_id: str | None, status: str, **extra: Any) -> None:
     rows = read_suggestions(root, skill)
     for row in rows:
@@ -1282,6 +1328,7 @@ def accept_proposal(root: Path, skill: str, proposal_id: str) -> dict[str, Any]:
         root, skill, proposal.get("suggestion_id"), "addressed",
         addressed_by=proposal_id, addressed_at=proposal["promoted_at"],
     )
+    _mark_jobs_promoted(root, proposal_id, new_version)
     _update_registry_skill(
         root,
         skill,
@@ -1526,6 +1573,7 @@ def parser() -> argparse.ArgumentParser:
     review_job.add_argument("job_id")
     review_job.add_argument("--decision", choices=("approved", "rejected"), required=True)
     review_job.add_argument("--note", required=True)
+    review_job.add_argument("--owner", default=None, help="Responsável pela proposta aberta ao aprovar.")
     commands.add_parser("status", help="Mostra o painel compacto da evolução.")
     return root
 
@@ -1651,7 +1699,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(read_jobs(root, args.status), ensure_ascii=False, indent=2))
         return 0
     if args.command == "review-job":
-        print(json.dumps(decide_job(root, args.job_id, args.decision, args.note), ensure_ascii=False, indent=2))
+        print(json.dumps(decide_job(root, args.job_id, args.decision, args.note, args.owner), ensure_ascii=False, indent=2))
         return 0
     if args.command == "status":
         print(json.dumps(evolution_status(root), ensure_ascii=False, indent=2))

@@ -21,7 +21,7 @@ Comandos: `python .claude/hooks/skill_evolution.py <comando>`.
 
 ## Procedimento
 
-1. **Escolher.** `suggestions <skill>`: uma com `status: proposed` (`in_progress` já tem proposta; `addressed` já foi promovida). Sem sugestão aberta, não há evidência para evoluir: parar. Sem proposta ainda: `propose <skill> --suggestion <S-ID> --owner <quem pediu>`.
+1. **Escolher.** `suggestions <skill>`: uma com `status: proposed` (`in_progress` já tem proposta; `addressed` já foi promovida). Sem sugestão aberta, não há evidência para evoluir: parar. Um job aprovado com `review-job` já abriu a proposta (`proposals <skill>`); sem proposta ainda: `propose <skill> --suggestion <S-ID> --owner <quem pediu>`.
 2. **Ler.** `proposal-context <skill> --proposal <P-ID>` devolve evidência, política e contrato. Ler também a `SKILL.md` em `base_path`.
    - `active_matches_base: false`: a skill ativa mudou. Recriar a proposta.
    - `usage_contract_ready: false`: o contrato de uso é do humano. Propor um a partir da description e da evidência, pedir confirmação e só então `configure-usage`. Não seguir sem ele.

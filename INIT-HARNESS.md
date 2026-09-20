@@ -525,6 +525,29 @@ um objeto JSON de análise e indicar `needs_review: true` quando a análise prec
 do agente caro. O worker não usa shell, aplica timeout e registra falhas no próprio
 job. A revisão cara será uma etapa separada e nunca é executada pelo hook.
 
+Ciclo de um job (`status` mostra a contagem de cada estado):
+
+| Status | Significa | Depois |
+|---|---|---|
+| `queued` | Experiência registrada, aguardando o worker | `processing` |
+| `processing` | Um runner está trabalhando nele | resultado do runner |
+| `analyzed` | O worker concluiu que não exige julgamento | encerrado |
+| `review_required` | O worker pede o revisor caro | `processing` |
+| `review_approved` | O revisor considera que a evidência sustenta uma proposta | decisão humana |
+| `human_required` | O revisor sinalizou `needs_human` e não decidiu sozinho | decisão humana |
+| `rejected` | Descartado pelo revisor ou pelo humano | encerrado |
+| `approved` | O humano aprovou; a proposta já foi aberta (`proposal_id`, `suggestion_id`) | `promoted` |
+| `promoted` | A proposta vinculada foi promovida (`promoted_version`) | encerrado |
+| `failed` | Runner com erro, timeout ou saída inválida (`error`) | sem reenfileiramento automático |
+
+`review-job --decision approved --note "..." [--owner <quem>]` só vale para `review_approved`
+ou `human_required`. Aprovar abre uma proposta em rascunho: reusa a sugestão aberta que contém
+a experiência ou, se não houver (falha isolada abaixo do limiar), cria uma com `origin: review`.
+Jobs do mesmo padrão compartilham a sugestão e a proposta. Se a criação falhar, ou se a
+experiência já tiver sido tratada por uma sugestão promovida, a decisão não é gravada e o job
+continua decidível. `accept` da proposta marca os jobs vinculados como `promoted`. A partir daí
+o caminho é o da skill `evolve`: escrever a candidata, submeter e avaliar.
+
 Quando uma experiência cria um padrão recorrente — duas ocorrências do mesmo tipo
 ou uma correção humana explícita — o harness cria uma sugestão em
 `.init-harness/skills/<skill>/suggestions.jsonl`, vinculada aos IDs das experiências
