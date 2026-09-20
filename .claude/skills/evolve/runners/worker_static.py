@@ -61,9 +61,17 @@ def analyze(job: dict, experiences: list[dict]) -> dict:
     elif human_correction:
         classification, needs_review, reasons = "needs_judgment", True, ["correção humana explícita"]
     elif recurrence >= 2:
-        classification, needs_review, reasons = "needs_judgment", True, [f"padrão recorrente ({recurrence} ocorrências)"]
+        classification, needs_review, reasons = (
+            "needs_judgment",
+            True,
+            [f"padrão recorrente ({recurrence} ocorrências)"],
+        )
     elif explained:
-        classification, needs_review, reasons = "needs_judgment", True, ["falha com explicação registrada por agente ou humano"]
+        classification, needs_review, reasons = (
+            "needs_judgment",
+            True,
+            ["falha com explicação registrada por agente ou humano"],
+        )
     else:
         classification, needs_review = "unexplained_failure", False
         reasons = ["falha automática sem explicação e sem recorrência; aguardar /record ou nova ocorrência"]

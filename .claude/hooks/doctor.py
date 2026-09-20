@@ -174,7 +174,9 @@ def main() -> int:
             continue
         meta = E.parse_frontmatter(texto)
         if meta.get("name") != nome_dir:
-            problemas_skills.append(f"{nome_dir}: name do frontmatter ({meta.get('name') or 'ausente'}) difere do diretório")
+            problemas_skills.append(
+                f"{nome_dir}: name do frontmatter ({meta.get('name') or 'ausente'}) difere do diretório"
+            )
         if not meta.get("description"):
             problemas_skills.append(f"{nome_dir}: description ausente ou vazia no frontmatter")
     if problemas_skills:

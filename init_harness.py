@@ -482,9 +482,7 @@ def run_project_bootstrap(target: Path, reporter: Reporter) -> None:
         "analysis": {
             "graph": {"present": graph.is_file(), "path": "graphify-out/graph.json"},
             "fronts": (
-                sorted(path.relative_to(target).as_posix() for path in fronts.glob("*.md"))
-                if fronts.is_dir()
-                else []
+                sorted(path.relative_to(target).as_posix() for path in fronts.glob("*.md")) if fronts.is_dir() else []
             ),
             "debts": {"present": debts.is_file(), "path": "docs/ai/DEBITOS.md"},
             "project_files": len([path for path in target.rglob("*") if path.is_file() and ".git" not in path.parts]),

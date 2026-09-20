@@ -85,15 +85,22 @@ class InstallerTest(unittest.TestCase):
 
     def _install_and_doctor(self, target: Path, mutate) -> subprocess.CompletedProcess[str]:
         git_init(target)
-        self.assertEqual(0, init_harness.main(["install", "--target", str(target), "--providers", "claude", "--graph", "manual"], KIT))
+        self.assertEqual(
+            0,
+            init_harness.main(["install", "--target", str(target), "--providers", "claude", "--graph", "manual"], KIT),
+        )
         mutate(target)
         return subprocess.run(
             [sys.executable, str(target / ".claude/hooks/doctor.py")],
-            cwd=target, capture_output=True, text=True, check=False,
+            cwd=target,
+            capture_output=True,
+            text=True,
+            check=False,
         )
 
     def test_doctor_reprova_skill_com_frontmatter_quebrado(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
+
             def quebrar(target: Path) -> None:
                 skill = target / ".claude/skills/spec/SKILL.md"
                 skill.write_bytes(b"\n" + skill.read_bytes())
@@ -105,6 +112,7 @@ class InstallerTest(unittest.TestCase):
 
     def test_doctor_reprova_settings_sem_ativacao_de_skill(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
+
             def remover(target: Path) -> None:
                 path = target / ".claude/settings.json"
                 data = json.loads(path.read_text(encoding="utf-8"))

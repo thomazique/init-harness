@@ -127,7 +127,9 @@ def call_model(prompt: str, timeout: int) -> str:
             check=False,
         )
     if completed.returncode != 0:
-        raise RuntimeError(f"cliente terminou com código {completed.returncode}: {(completed.stderr or completed.stdout)[-500:]}")
+        raise RuntimeError(
+            f"cliente terminou com código {completed.returncode}: {(completed.stderr or completed.stdout)[-500:]}"
+        )
     return completed.stdout
 
 
@@ -150,7 +152,9 @@ def parse_review(text: str) -> dict:
         or not isinstance(risks, list)
         or not all(isinstance(item, str) for item in risks)
     ):
-        raise RuntimeError("resposta do modelo fora do formato: approved (bool), rationale (texto) e risks (lista de textos)")
+        raise RuntimeError(
+            "resposta do modelo fora do formato: approved (bool), rationale (texto) e risks (lista de textos)"
+        )
     # O revisor decide se a evidência sustenta uma proposta; a decisão humana é etapa própria.
     return {"approved": raw["approved"], "needs_human": False, "rationale": rationale.strip(), "risks": risks}
 

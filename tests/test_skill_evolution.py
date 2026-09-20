@@ -312,8 +312,20 @@ class SkillEvolutionTest(unittest.TestCase):
                 skill_evolution.record_experience(
                     root,
                     skill_evolution.parser().parse_args(
-                        ["--root", str(root), "record", "billing", "--task-id", task, "--outcome", "failure",
-                         "--summary", "Fonte errada.", "--failure-type", "wrong-source"]
+                        [
+                            "--root",
+                            str(root),
+                            "record",
+                            "billing",
+                            "--task-id",
+                            task,
+                            "--outcome",
+                            "failure",
+                            "--summary",
+                            "Fonte errada.",
+                            "--failure-type",
+                            "wrong-source",
+                        ]
                     ),
                 )
             suggestion = skill_evolution.read_suggestions(root, "billing")[0]
@@ -433,7 +445,7 @@ class SkillEvolutionTest(unittest.TestCase):
                                 "baseline_passed": True,
                                 "candidate_passed": False,
                                 "guardrail_failures": 0,
-                            }
+                            },
                         ]
                     }
                 ),
@@ -614,7 +626,9 @@ class SkillEvolutionTest(unittest.TestCase):
             self.assertEqual("success", closed[0]["outcome"])
             self.assertEqual(2, closed[0]["metrics"]["tool_calls"])
             self.assertEqual("reports", skill_evolution.active_skill(root, "s1")["active_skill"])
-            fresh = skill_evolution.observe_tool_event(root, {"session_id": "s1", "tool_use_id": "t3", "tool_name": "Read"})
+            fresh = skill_evolution.observe_tool_event(
+                root, {"session_id": "s1", "tool_use_id": "t3", "tool_name": "Read"}
+            )
             self.assertEqual(("reports", 1), (fresh["skill"], fresh["tool_calls"]))
             self.assertEqual([], skill_evolution.read_experiences(root, "reports"))
 
@@ -625,8 +639,22 @@ class SkillEvolutionTest(unittest.TestCase):
             skill_evolution.record_experience(
                 root,
                 skill_evolution.parser().parse_args(
-                    ["--root", str(root), "record", "billing", "--task-id", f"t{number}", "--outcome", "failure",
-                     "--summary", f"Fonte errada {number}.", "--failure-type", "wrong-source", "--source", source]
+                    [
+                        "--root",
+                        str(root),
+                        "record",
+                        "billing",
+                        "--task-id",
+                        f"t{number}",
+                        "--outcome",
+                        "failure",
+                        "--summary",
+                        f"Fonte errada {number}.",
+                        "--failure-type",
+                        "wrong-source",
+                        "--source",
+                        source,
+                    ]
                 ),
             )
         suggestion = skill_evolution.read_suggestions(root, "billing")[0]
@@ -687,9 +715,7 @@ class SkillEvolutionTest(unittest.TestCase):
             (root / proposal["candidate_path"]).write_text("# sem frontmatter\n", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "frontmatter"):
                 skill_evolution.submit_candidate(root, "billing", pid, "x")
-            (root / proposal["candidate_path"]).write_text(
-                "---\nname: outra\ndescription: d\n---\n", encoding="utf-8"
-            )
+            (root / proposal["candidate_path"]).write_text("---\nname: outra\ndescription: d\n---\n", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "name igual à skill"):
                 skill_evolution.submit_candidate(root, "billing", pid, "x")
 
@@ -760,8 +786,19 @@ class SkillEvolutionTest(unittest.TestCase):
             self.assertEqual(created[0]["job_id"], claimed["job_id"])
 
     def _record(self, root: Path, task: str, failure_type: str | None = "wrong-source", *extra: str) -> dict:
-        argv = ["--root", str(root), "record", "billing", "--task-id", task, "--outcome", "failure",
-                "--summary", f"falha {task}", *extra]
+        argv = [
+            "--root",
+            str(root),
+            "record",
+            "billing",
+            "--task-id",
+            task,
+            "--outcome",
+            "failure",
+            "--summary",
+            f"falha {task}",
+            *extra,
+        ]
         if failure_type:
             argv += ["--failure-type", failure_type]
         return skill_evolution.record_experience(root, skill_evolution.parser().parse_args(argv))
@@ -871,16 +908,35 @@ class SkillEvolutionTest(unittest.TestCase):
                 out = io.StringIO()
                 with contextlib.redirect_stdout(out):
                     skill_evolution.main(
-                        ["--root", str(root), "record", "billing", "--task-id", task, "--outcome", "failure",
-                         "--summary", "x", "--failure-type", "wrong-source"]
+                        [
+                            "--root",
+                            str(root),
+                            "record",
+                            "billing",
+                            "--task-id",
+                            task,
+                            "--outcome",
+                            "failure",
+                            "--summary",
+                            "x",
+                            "--failure-type",
+                            "wrong-source",
+                        ]
                     )
                 return json.loads(out.getvalue())
 
             self.assertEqual(([], []), (run("t1")["new_suggestions"], run("t2")["updated_suggestions"]))
             third = run("t3")
             self.assertEqual([], third["new_suggestions"])
-            self.assertEqual([{"suggestion_id": skill_evolution.read_suggestions(root, "billing")[0]["suggestion_id"],
-                               "occurrences": 3}], third["updated_suggestions"])
+            self.assertEqual(
+                [
+                    {
+                        "suggestion_id": skill_evolution.read_suggestions(root, "billing")[0]["suggestion_id"],
+                        "occurrences": 3,
+                    }
+                ],
+                third["updated_suggestions"],
+            )
 
 
 if __name__ == "__main__":

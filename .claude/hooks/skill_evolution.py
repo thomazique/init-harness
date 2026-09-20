@@ -389,8 +389,11 @@ def consolidate_hook_experience(payload: dict[str, Any], observation: dict[str, 
     nested = payload.get("skill_experience")
     experience = dict(nested) if isinstance(nested, dict) else {}
     skill = str(
-        experience.get("skill") or payload.get("active_skill") or payload.get("skill")
-        or (observation or {}).get("skill") or ""
+        experience.get("skill")
+        or payload.get("active_skill")
+        or payload.get("skill")
+        or (observation or {}).get("skill")
+        or ""
     ).strip()
     session_id = str(experience.get("session_id") or payload.get("session_id") or "").strip() or None
     task_id = str(experience.get("task_id") or payload.get("task_id") or "").strip() or session_id
@@ -440,11 +443,14 @@ def consolidate_hook_experience(payload: dict[str, Any], observation: dict[str, 
     if observation:
         result.setdefault("tools", sorted((observation.get("tools") or {}).keys()))
         result.setdefault("files", observation.get("files") or [])
-        result.setdefault("metrics", {
-            "tool_calls": calls,
-            "tool_failures": failures,
-            "duration_ms": observation.get("duration_ms", 0),
-        })
+        result.setdefault(
+            "metrics",
+            {
+                "tool_calls": calls,
+                "tool_failures": failures,
+                "duration_ms": observation.get("duration_ms", 0),
+            },
+        )
     return result
 
 
@@ -561,9 +567,9 @@ def capture_hook_experience(root: Path, payload: dict[str, Any]) -> dict[str, An
         human_correction=bool(data.get("human_correction")),
         tool=values("tools"),
         file=values("files"),
-        metric=values("metrics") if isinstance(data.get("metrics"), list) else [
-            f"{key}={value}" for key, value in (data.get("metrics") or {}).items()
-        ],
+        metric=values("metrics")
+        if isinstance(data.get("metrics"), list)
+        else [f"{key}={value}" for key, value in (data.get("metrics") or {}).items()],
         tag=values("tags"),
     )
     return record_experience(root, args)
@@ -665,9 +671,8 @@ def _write_suggestions(root: Path, skill: str, rows: list[dict[str, Any]]) -> No
 
 
 def _suggestion_rationale(pattern: str, count: int, human_correction: bool) -> str:
-    return (
-        f"O padrão {pattern.split(':', 1)[1]!r} apareceu em {count} experiência(s)"
-        + (" e houve correção humana." if human_correction else ".")
+    return f"O padrão {pattern.split(':', 1)[1]!r} apareceu em {count} experiência(s)" + (
+        " e houve correção humana." if human_correction else "."
     )
 
 
@@ -690,8 +695,7 @@ def _build_suggestion(
         "summaries": [event["summary"] for event in events[-5:]],
         "rationale": _suggestion_rationale(pattern, len(events), any(e.get("human_correction") for e in events)),
         "proposed_action": (
-            "Revisar a skill para tratar esse padrão e criar um caso de regressão "
-            "antes de propor uma nova versão."
+            "Revisar a skill para tratar esse padrão e criar um caso de regressão antes de propor uma nova versão."
         ),
     }
     if origin:
@@ -910,7 +914,18 @@ def proposal_context(root: Path, skill: str, proposal_id: str) -> dict[str, Any]
     """Reúne o que o autor de uma candidata precisa ler antes de editá-la; não altera nada."""
     proposal, _ = _load_proposal(root, skill, proposal_id)
     ids = set(proposal.get("evidence_event_ids") or [])
-    fields = ("event_id", "source", "outcome", "score", "failure_type", "summary", "human_correction", "tools", "files", "tags")
+    fields = (
+        "event_id",
+        "source",
+        "outcome",
+        "score",
+        "failure_type",
+        "summary",
+        "human_correction",
+        "tools",
+        "files",
+        "tags",
+    )
     evidence = [
         {key: event.get(key) for key in fields}
         for event in read_experiences(root, skill)
@@ -929,15 +944,21 @@ def proposal_context(root: Path, skill: str, proposal_id: str) -> dict[str, Any]
         "base_path": proposal["base_path"],
         "candidate_path": proposal["candidate_path"],
         "active_matches_base": active_hash == proposal.get("base_sha256"),
-        "candidate_changed": (root / proposal["candidate_path"]).read_bytes() != (root / proposal["base_path"]).read_bytes(),
+        "candidate_changed": (root / proposal["candidate_path"]).read_bytes()
+        != (root / proposal["base_path"]).read_bytes(),
         "change_summary": proposal.get("change_summary"),
         "evidence": evidence,
         # Falha automática (source=system) só diz que houve falha, não o motivo.
-        "explained_evidence": sum(1 for item in evidence if item.get("source") != "system" or item.get("human_correction")),
+        "explained_evidence": sum(
+            1 for item in evidence if item.get("source") != "system" or item.get("human_correction")
+        ),
         "usage_contract": contract,
-        "usage_contract_ready": bool(contract.get("when")) and bool(str(contract.get("expected_outcome") or "").strip()),
+        "usage_contract_ready": bool(contract.get("when"))
+        and bool(str(contract.get("expected_outcome") or "").strip()),
         "evaluation_policy": proposal.get("evaluation_policy") or evaluation_policy(root, skill),
-        "case_files": sorted(p.name for p in cases_dir.glob("*.json") if p.name != "schema.json") if cases_dir.is_dir() else [],
+        "case_files": sorted(p.name for p in cases_dir.glob("*.json") if p.name != "schema.json")
+        if cases_dir.is_dir()
+        else [],
     }
 
 
@@ -1016,18 +1037,14 @@ def evaluate_proposal(
         raise ValueError("candidata não contém mudança em relação à skill ativa")
     policy = proposal.get("evaluation_policy") or evaluation_policy(root, skill)
     improvement = (
-        candidate_score - baseline_score
-        if policy.get("higher_is_better", True)
-        else baseline_score - candidate_score
+        candidate_score - baseline_score if policy.get("higher_is_better", True) else baseline_score - candidate_score
     )
     required_improvement = (
         minimum_improvement if minimum_improvement is not None else float(policy.get("minimum_improvement", 0.0))
     )
     allowed_regressions = max_regressions if max_regressions is not None else int(policy.get("max_regressions", 0))
     allowed_guardrails = (
-        max_guardrail_failures
-        if max_guardrail_failures is not None
-        else int(policy.get("max_guardrail_failures", 0))
+        max_guardrail_failures if max_guardrail_failures is not None else int(policy.get("max_guardrail_failures", 0))
     )
     passed = (
         improvement >= required_improvement
@@ -1162,7 +1179,14 @@ def init_evaluation(root: Path, skill: str) -> Path:
     if not example.exists():
         example.write_text(
             json.dumps(
-                {"case_id": "case-001", "example": True, "task": "Cenário de exemplo", "input": {}, "expected": {}, "tags": []},
+                {
+                    "case_id": "case-001",
+                    "example": True,
+                    "task": "Cenário de exemplo",
+                    "input": {},
+                    "expected": {},
+                    "tags": [],
+                },
                 ensure_ascii=False,
                 indent=2,
             )
@@ -1325,8 +1349,12 @@ def accept_proposal(root: Path, skill: str, proposal_id: str) -> dict[str, Any]:
     proposal["promoted_version"] = new_version
     _save_proposal(path, proposal)
     _set_suggestion_status(
-        root, skill, proposal.get("suggestion_id"), "addressed",
-        addressed_by=proposal_id, addressed_at=proposal["promoted_at"],
+        root,
+        skill,
+        proposal.get("suggestion_id"),
+        "addressed",
+        addressed_by=proposal_id,
+        addressed_at=proposal["promoted_at"],
     )
     _mark_jobs_promoted(root, proposal_id, new_version)
     _update_registry_skill(
@@ -1432,9 +1460,7 @@ def sync_registry(root: Path) -> dict[str, Any]:
         proposals = read_proposals(root, item["id"])
         item["proposal_path"] = proposals_root(root, item["id"]).relative_to(root).as_posix()
         item["proposal_count"] = len(proposals)
-        item["history_path"] = old.get(
-            "history_path", f".init-harness/skills/{item['id']}/history/"
-        )
+        item["history_path"] = old.get("history_path", f".init-harness/skills/{item['id']}/history/")
         skills.append(item)
     result = {"schema_version": 1, "updated_at": date.today().isoformat(), "skills": skills}
     path = registry_path(root)
@@ -1699,7 +1725,11 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(read_jobs(root, args.status), ensure_ascii=False, indent=2))
         return 0
     if args.command == "review-job":
-        print(json.dumps(decide_job(root, args.job_id, args.decision, args.note, args.owner), ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                decide_job(root, args.job_id, args.decision, args.note, args.owner), ensure_ascii=False, indent=2
+            )
+        )
         return 0
     if args.command == "status":
         print(json.dumps(evolution_status(root), ensure_ascii=False, indent=2))
