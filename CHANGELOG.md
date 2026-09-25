@@ -1,5 +1,28 @@
 # Changelog
 
+## 4.0.0 — orquestração multiagente padrão
+
+### Alterado
+
+- Agente principal passa a coordenar e delegar tarefas de implementação a executores; deixa de implementar diretamente as subtarefas delegadas.
+- Auditoria independente e somente de leitura do diff agregado passa a ser gate antes da conclusão. Achados bloqueantes retornam aos executores e exigem nova auditoria.
+- Subtarefas recebem arquivos autorizados e donos exclusivos por etapa; dependências são sequenciadas e mudanças anteriores do usuário são preservadas.
+- O fluxo agora é distribuído pelos adaptadores nativos de cada cliente: `.claude/agents/` para Claude Code e `.codex/agents/` para Codex.
+- Concorrência padrão limitada a três executores ativos; número maior de tarefas segue em etapas para reduzir escrita simultânea e sobreposição.
+- Adicionada fila explícita de tarefas prontas, em andamento, bloqueadas, concluídas e auditadas; vagas são preenchidas conforme executores terminam.
+- Limite configurável de executores em `.init-harness/config.json`, com controles nativos equivalentes em `.claude/settings.json` e `.codex/config.toml`.
+- Perfis iniciais configuram Sonnet/Opus no Claude Code e GPT-6 Luna com raciocínio alto no Codex; modelos podem ser alterados nos arquivos de perfil.
+- Adicionado `.init-harness/orquestracao.json`: o coordenador pergunta o perfil base em cada atividade e registra a escolha somente na frente correspondente, permitindo configurações diferentes em frentes simultâneas.
+- Adicionados perfis híbridos configuráveis para Claude Opus + Codex GPT-6 Luna em ambas as direções, com execução via CLI headless e autenticação/cotas próprias de cada cliente.
+- Adicionado runner de lotes com concorrência configurável, sandbox de escrita para executores, leitura para auditor e limite de chamadas CLI externas por atividade; o ledger local guarda metadados sem prompts ou respostas.
+- Execução econômica: uma auditoria por diff consolidado e contexto restrito por subtarefa; concorrência limita o pico, sem garantir custo monetário fixo.
+- Documentada a separação entre perfis nativos do cliente e perfis híbridos executados pelos CLIs autenticados localmente.
+- Upgrade migra a regra padrão antiga de delegação no `AGENTS.md`, preservando o restante do arquivo e instruções personalizadas.
+
+### Adicionado
+
+- Skill de coordenação `orquestrar`, definições de executor para Claude Code e Codex, e perfis de auditor somente leitura para ambos.
+
 ## 3.2.2 — verificador de frontend protegido por testes
 
 ### Testes

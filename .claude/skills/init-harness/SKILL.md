@@ -26,6 +26,7 @@ Cada passo é um checkpoint. Ao final de cada um: o que foi feito e qual o próx
    .claude/skills/spec/
    .claude/skills/pilares/
    .claude/skills/commit/
+   .claude/skills/orquestrar/
    .claude/skills/offboarding/
    tests/guardrails/
    ```
@@ -132,8 +133,10 @@ A partir dos templates em `.claude/skills/init-harness/templates/` (`CLAUDE.temp
 | `docs/ai/DECISOES.md`  | Decisões da implantação: modo, tier, convenções escolhidas                                                                                                             |
 | `docs/ai/DEBITOS.md`   | Riscos visíveis do passo 5 e "auditoria de pilares pendente"                                                                                                               |
 | `.init-harness/config.json` | Versão, modo, data, grafo,`frente_inativa_horas`, regras de `ambientes`                                                                                                |
+| `.init-harness/orquestracao.json` | Perfis selecionáveis de coordenador, executor e auditor para Claude Code/Codex |
 
 Nada genérico: campo sem informação confirmada mantém o marcador `PENDENTE` do template. Em `config.json`, sem confirmação, `frente_inativa_horas` fica `null` e `regras` fica vazio (tudo cai em `se_indeterminado: bloquear`).
+O instalador também cria `.init-harness/orquestracao.json` com perfis iniciais; não escolha um perfil global durante a implantação. O coordenador pergunta qual usar em cada atividade e registra a escolha na frente dela.
 
 ---
 
@@ -165,6 +168,7 @@ Rodar a skill `pilares` com o tier declarado. Resultado em `DEBITOS.md`.
 ## Critério de pronto
 
 - [ ] `.init-harness/config.json` existe e está correto
+- [ ] `.init-harness/orquestracao.json` existe; os perfis iniciais e seus modelos foram apresentados ao usuário
 - [ ] Grafo gerado e git hooks do graphify ativos (ou `grafo: manual` com débito)
 - [ ] `CLAUDE.md` com tier, comandos de verificação e seção `## graphify`
 - [ ] `config.json` com regras de ambiente, autonomia e `frente_inativa_horas` confirmados

@@ -1,0 +1,36 @@
+{
+  "$schema": "./schema/orquestracao.schema.json",
+  "perguntar_a_cada_atividade": true,
+  "limite_chamadas_cli_por_atividade": 8,
+  "timeout_segundos": 1800,
+  "perfis": [
+    {
+      "id": "claude_opus_codex_luna",
+      "descricao": "Claude Opus coordena e audita; Codex GPT-6 Luna executa.",
+      "coordenador": {"provedor": "claude", "modelo": "opus", "modo": "sessao"},
+      "executor": {"provedor": "codex", "modelo": "gpt-6-luna", "raciocinio": "high", "modo": "cli"},
+      "auditor": {"provedor": "claude", "modelo": "opus", "modo": "cli"}
+    },
+    {
+      "id": "codex_luna_claude_opus",
+      "descricao": "Codex GPT-6 Luna coordena e executa; Claude Opus audita.",
+      "coordenador": {"provedor": "codex", "modelo": "gpt-6-luna", "modo": "sessao"},
+      "executor": {"provedor": "codex", "modelo": "gpt-6-luna", "raciocinio": "high", "modo": "cli"},
+      "auditor": {"provedor": "claude", "modelo": "opus", "modo": "cli"}
+    },
+    {
+      "id": "claude_nativo",
+      "descricao": "Claude coordena, executa e audita usando os perfis nativos do Claude Code.",
+      "coordenador": {"provedor": "claude", "modelo": "sessao", "modo": "sessao"},
+      "executor": {"provedor": "claude", "modelo": "sonnet", "modo": "nativo"},
+      "auditor": {"provedor": "claude", "modelo": "opus", "modo": "nativo"}
+    },
+    {
+      "id": "codex_nativo",
+      "descricao": "Codex coordena, executa e audita usando os perfis nativos do Codex.",
+      "coordenador": {"provedor": "codex", "modelo": "sessao", "modo": "sessao"},
+      "executor": {"provedor": "codex", "modelo": "gpt-6-luna", "modo": "nativo"},
+      "auditor": {"provedor": "codex", "modelo": "gpt-6-luna", "modo": "nativo"}
+    }
+  ]
+}

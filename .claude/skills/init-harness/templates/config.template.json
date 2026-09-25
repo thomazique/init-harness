@@ -1,6 +1,6 @@
 {
   "$schema": "./schema/config.schema.json",
-  "harness_version": "3.2.2",
+  "harness_version": "4.0.0",
   "modo": "proprio",
   "instalado_em": "AAAA-MM-DD",
   "providers": ["claude", "codex"],
@@ -14,6 +14,11 @@
     "producao": "confirmar",
     "destrutivo": "confirmar",
     "politica_negocio": "bloquear"
+  },
+  "orquestracao": {
+    "limite_executores": 3,
+    "paralelizar_tarefas_independentes": true,
+    "auditoria_uma_vez_por_atividade": true
   },
   "ambientes": {
     "se_indeterminado": "bloquear",

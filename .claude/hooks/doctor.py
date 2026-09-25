@@ -112,10 +112,22 @@ def main() -> int:
         ".githooks/pre-commit",
         ".githooks/pre_commit.py",
         ".init-harness/schema/config.schema.json",
+        ".init-harness/schema/orquestracao.schema.json",
+        ".init-harness/orquestracao.json",
+        ".claude/skills/orquestrar/scripts/invocar_agentes.py",
     ]
     providers = h.get("providers", [])
     if "codex" in providers:
-        obrigatorios.append("AGENTS.md")
+        obrigatorios.extend(
+            (
+                "AGENTS.md",
+                ".codex/agents/harness_executor.toml",
+                ".codex/agents/harness_auditor.toml",
+                ".codex/config.toml",
+            )
+        )
+    if "claude" in providers:
+        obrigatorios.extend((".claude/agents/executor.md", ".claude/agents/revisor.md"))
     if h.get("modo") != "cliente":
         obrigatorios.append("tests/guardrails/test_guardrails.py")
     ausentes = [c for c in obrigatorios if not (raiz / c).exists()]
@@ -123,6 +135,51 @@ def main() -> int:
         erros.append("arquivos obrigatórios ausentes: " + ", ".join(ausentes))
     else:
         ok.append("arquivos de enforcement presentes")
+
+    perfis_path = raiz / ".init-harness" / "orquestracao.json"
+    if perfis_path.is_file():
+        try:
+            perfis_config = json.loads(perfis_path.read_text(encoding="utf-8"))
+            if not isinstance(perfis_config, dict):
+                raise ValueError("raiz precisa ser um objeto")
+            perfis = perfis_config.get("perfis")
+            ids = [p.get("id") for p in perfis if isinstance(p, dict)] if isinstance(perfis, list) else []
+            limites_validos = all(
+                isinstance(perfis_config.get(chave), int) and perfis_config[chave] > 0
+                for chave in ("limite_chamadas_cli_por_atividade", "timeout_segundos")
+            )
+            ids_validos = (
+                isinstance(perfis, list)
+                and bool(perfis)
+                and len(ids) == len(perfis)
+                and all(isinstance(identificador, str) and identificador for identificador in ids)
+                and len(set(ids)) == len(ids)
+            )
+            if perfis_config.get("perguntar_a_cada_atividade") is not True or not ids_validos or not limites_validos:
+                erros.append("orquestracao.json deve perguntar em cada atividade e conter perfis com IDs únicos")
+            else:
+                ok.append(f"{len(perfis)} perfil(is) de orquestração disponíveis")
+            for perfil in perfis if isinstance(perfis, list) else []:
+                if not isinstance(perfil, dict):
+                    erros.append("orquestracao.json contém perfil inválido")
+                    continue
+                for papel in ("coordenador", "executor", "auditor"):
+                    agente = perfil.get(papel)
+                    if (
+                        not isinstance(agente, dict)
+                        or agente.get("provedor") not in {"claude", "codex"}
+                        or not isinstance(agente.get("modelo"), str)
+                        or agente.get("modo") not in {"sessao", "nativo", "cli"}
+                    ):
+                        erros.append(f"perfil {perfil.get('id', '?')} tem papel {papel} inválido")
+                    elif agente.get("modo") == "cli":
+                        executavel = "claude" if agente["provedor"] == "claude" else "codex"
+                        if not shutil.which(executavel):
+                            avisos.append(
+                                f"perfil {perfil.get('id', '?')} requer '{executavel}' no PATH para chamadas CLI"
+                            )
+        except (OSError, json.JSONDecodeError, ValueError):
+            erros.append(".init-harness/orquestracao.json inválido")
 
     settings = raiz / ".claude" / "settings.json"
     if "claude" in providers and not settings.exists():

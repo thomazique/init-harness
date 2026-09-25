@@ -1,4 +1,4 @@
-# init-harness 3.2.2
+# init-harness 4.0.0
 
 `init-harness` instala e atualiza uma base operacional para trabalhar com agentes de IA em
 repositórios Git. Mantém protocolo e contexto do projeto em arquivos versionáveis, registra
@@ -6,7 +6,12 @@ o andamento entre sessões, conecta memória local e grafo de código, e adicion
 guardrails ao fluxo de trabalho. O harness serve a projetos diferentes: preserva os arquivos
 do projeto e adapta suas instruções ao código e às ferramentas existentes.
 
-A versão **3.2.2** adiciona testes de contrato para o verificador da skill de frontend,
+A versão **4.0.0** muda o protocolo padrão para trabalho multiagente: o agente principal coordena,
+divide a atividade entre executores com escopos explícitos e solicita auditoria independente do
+diff agregado. O fluxo tem adaptadores nativos para Claude Code e Codex, protege alterações
+preexistentes e encaminha achados do auditor de volta aos executores.
+
+A versão **3.2.2** adicionou testes de contrato para o verificador da skill de frontend,
 cobrindo os modos consultivo e `--strict`, avisos, comentários, tokens e descoberta de arquivos.
 A versão **3.2.1** adicionou testes de regressão para os caminhos de atualização segura do
 instalador: baseline do kit sem baseline anterior, hooks customizados sem `args`, referências
@@ -28,6 +33,10 @@ padrões de produto. O analisador é consultivo por padrão e só falha quando o
   arquivos afetados. O modo manual permite instalar sem Graphify.
 - **Protocolos e guardrails:** adaptadores para Claude Code e Codex, skills operacionais,
   hooks e verificações Git para reduzir riscos no fluxo de edição.
+- **Orquestração multiagente:** agente principal coordena; executores recebem tarefas e arquivos
+  delimitados; um auditor independente revisa o diff agregado e aprova ou reprova antes da
+  conclusão. Perfis base por atividade permitem usar agentes nativos ou combinar Claude Code e
+  Codex por meio dos CLIs autenticados localmente.
 - **Aprendizado controlado de skills:** captura experiências locais, agrupa sugestões,
   mantém fila e propostas, avalia candidatas e exige decisão humana antes de promover uma
   skill ativa.
@@ -49,6 +58,75 @@ componentes e acessibilidade, movimento e layout e revisão. O analisador Python
 alguns padrões mecânicos em arquivos web e Dart; seus diagnósticos são heurísticos, não uma
 medida universal de qualidade. O modo bloqueante `--strict` só é indicado quando a equipe
 decidir que essas regras se aplicam à sua stack.
+
+## Destaque da versão 4.0: execução coordenada por agentes
+
+Em solicitações de implementação, o agente principal atua como coordenador e delega as mudanças
+a agentes executores. Cada subtarefa recebe objetivo, critérios de aceite, dependências e arquivos
+autorizados. O coordenador controla a ordem, preserva mudanças preexistentes, espera os executores
+e compara seus relatórios com os arquivos realmente alterados.
+
+Depois que as escritas terminam, um auditor separado e somente de leitura confere o diff completo
+contra o pedido e os critérios de aceite. Uma reprovação devolve os achados aos executores e exige
+uma nova auditoria. O coordenador controla a integração por delegação e só conclui com aprovação
+do auditor e validações relatadas.
+
+Claude Code usa `.claude/agents/executor.md` e `.claude/agents/revisor.md`. Codex usa
+`.codex/agents/harness_executor.toml` e `.codex/agents/harness_auditor.toml`. O protocolo comum
+está em `.claude/skills/orquestrar/SKILL.md` e em `INIT-HARNESS.md`. O coordenador mantém uma fila
+de tarefas com dependências e donos de arquivos, inicia tarefas independentes até o limite e
+preenche vagas quando um executor termina. A configuração inicial permite até três executores
+ativos. Tarefas que dependem umas das outras ou alteram os mesmos arquivos seguem em sequência;
+uma única auditoria confere o diff consolidado.
+
+As subtarefas de uma atividade ficam no quadro `Tarefas delegadas` de uma única frente. O quadro
+registra quem executa, dependências, arquivos e resultado. Não é necessário abrir uma frente por
+executor. Frentes de produto separadas continuam em branches e worktrees próprias para manter o
+isolamento já exigido pelo harness.
+
+### Modelos, concorrência e custo
+
+`orquestracao.limite_executores` em `.init-harness/config.json` define o limite usado pelo
+protocolo. Para mudar o limite máximo efetivo, ajuste também
+`CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` em `.claude/settings.json` ou
+`agents.max_concurrent_threads_per_session` em `.codex/config.toml`, conforme o cliente. Os modelos
+são configuráveis nos perfis nativos: `model` nos arquivos `.claude/agents/*.md`; `model` e
+`model_reasoning_effort` em `.codex/agents/*.toml`.
+
+No início de cada atividade, o coordenador pergunta qual perfil usar em
+`.init-harness/orquestracao.json` e registra a escolha na frente daquela atividade. Tarefas
+simultâneas podem escolher perfis diferentes sem sobrescrever uma configuração global. O arquivo
+define provedor e modelo para coordenador, executores e auditor e pode ser editado pelo projeto.
+
+Os perfis iniciais incluem `claude_opus_codex_luna` (Claude Opus coordena e audita; Codex GPT-6
+Luna executa) e `codex_luna_claude_opus` (Codex GPT-6 Luna coordena e executa; Claude Opus audita),
+além de opções nativas para cada cliente. Os perfis híbridos chamam os CLIs instalados localmente,
+que precisam estar autenticados na conta de cada provedor. Uma configuração só é usada quando
+escolhida para a atividade.
+Em perfis nativos do Codex, alinhe o modelo do arquivo com `model` em `.codex/agents/*.toml`; os
+perfis `cli` aplicam diretamente o modelo escolhido no arquivo de orquestração.
+
+O arquivo `.init-harness/state/orquestracao.sqlite3` guarda metadados das chamadas CLI, sem prompts
+ou respostas. O runner desativa a persistência local de sessões nos dois CLIs. `limite_chamadas_cli_por_atividade`
+limita quantas invocações externas são iniciadas; `--remover-lote` apaga o JSON temporário com as
+instruções depois que o runner o lê. Isso não altera a retenção ou o uso de dados pelo provedor.
+
+Os perfis iniciais usam Sonnet para execução e Opus para auditoria no Claude Code. No Codex, usam
+GPT-6 Luna com raciocínio `high` para execução e auditoria. O modelo do coordenador é o selecionado
+na sessão. Escolha modelos disponíveis na conta e no cliente em uso.
+
+O coordenador abre só executores com tarefas independentes e contexto delimitado, e o auditor revisa
+o diff consolidado uma vez. Subagentes geram chamadas extras e podem elevar o consumo. O limite de
+concorrência controla quantos rodam ao mesmo tempo; ele não estabelece um teto de custo nem garante
+que a conta final não aumente. Os controles financeiros dependem do plano e do provedor.
+
+Os perfis híbridos usam as contas, cotas e políticas de dados dos provedores selecionados. O limite
+de concorrência reduz o pico de chamadas e o limite por atividade controla o número de processos
+CLI; nenhum deles define um teto monetário ou garante que o custo final não aumente.
+
+O fluxo depende das ferramentas de subagentes disponíveis no cliente e na sessão ativa. As
+instruções e os perfis configuram os papéis; eles não substituem permissões, sandbox, revisão de
+código ou os gates de commit e deploy do projeto.
 
 > Estado: projeto em evolução. O harness ajuda a estruturar trabalho com IA,
 > mas não substitui revisão humana, sandbox, CI, backups ou controles de acesso.
@@ -111,7 +189,9 @@ python init_harness.py doctor --target C:\projeto
 
 O upgrade substitui apenas arquivos gerenciados pelo kit. `CLAUDE.md`,
 `AGENTS.md`, `docs/ai/` e a configuração específica do projeto são preservados
-e recebem somente migrações de referências conhecidas.
+e recebem somente migrações conhecidas. No `AGENTS.md`, a instrução padrão antiga
+de delegação condicional é atualizada para o protocolo multiagente 4.0; instruções
+personalizadas que não correspondam ao bloco padrão permanecem intactas.
 
 ## Arquitetura
 
@@ -119,6 +199,7 @@ e recebem somente migrações de referências conhecidas.
 - `.init-harness/config.json`: política específica da instalação.
 - `.init-harness/schema/`: contrato da configuração.
 - `.claude/`: adaptador, hooks, agentes e skills do Claude Code.
+- `.codex/agents/`: perfis nativos de executor e auditor para Codex.
 - `AGENTS.md`: adaptador do Codex gerado no projeto.
 - `docs/ai/` e `specs/`: memória operacional do projeto, pesquisável localmente por SQLite FTS5 reconstruível.
 - `docs/ai/memoria/handoffs/`: transições explícitas e versionáveis entre sessões/agentes.

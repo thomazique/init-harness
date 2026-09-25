@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/thomazique/init-harness/blob/main/.init-harness/schema/orquestracao.schema.json",
+  "title": "init-harness agent orchestration profiles",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "perguntar_a_cada_atividade",
+    "limite_chamadas_cli_por_atividade",
+    "timeout_segundos",
+    "perfis"
+  ],
+  "properties": {
+    "$schema": {"type": "string"},
+    "perguntar_a_cada_atividade": {"const": true},
+    "limite_chamadas_cli_por_atividade": {"type": "integer", "minimum": 1, "maximum": 100},
+    "timeout_segundos": {"type": "integer", "minimum": 30, "maximum": 14400},
+    "perfis": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/perfil"}
+    }
+  },
+  "$defs": {
+    "agente": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provedor", "modelo", "modo"],
+      "properties": {
+        "provedor": {"enum": ["claude", "codex"]},
+        "modelo": {"type": "string", "minLength": 1},
+        "modo": {"enum": ["sessao", "nativo", "cli"]},
+        "raciocinio": {"enum": ["low", "medium", "high", "xhigh"]}
+      }
+    },
+    "perfil": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "descricao", "coordenador", "executor", "auditor"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{1,63}$"},
+        "descricao": {"type": "string", "minLength": 1},
+        "coordenador": {"$ref": "#/$defs/agente"},
+        "executor": {"$ref": "#/$defs/agente"},
+        "auditor": {"$ref": "#/$defs/agente"}
+      }
+    }
+  }
+}

@@ -14,6 +14,7 @@
     "bootstrap",
     "frente_inativa_horas",
     "autonomia",
+    "orquestracao",
     "ambientes"
   ],
   "properties": {
@@ -56,6 +57,16 @@
         "producao": {"enum": ["confirmar", "bloquear"]},
         "destrutivo": {"enum": ["confirmar", "bloquear"]},
         "politica_negocio": {"enum": ["confirmar", "bloquear"]}
+      }
+    },
+    "orquestracao": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["limite_executores", "paralelizar_tarefas_independentes", "auditoria_uma_vez_por_atividade"],
+      "properties": {
+        "limite_executores": {"type": "integer", "minimum": 1},
+        "paralelizar_tarefas_independentes": {"type": "boolean"},
+        "auditoria_uma_vez_por_atividade": {"type": "boolean"}
       }
     },
     "ambientes": {

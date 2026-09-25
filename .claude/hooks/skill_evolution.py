@@ -21,7 +21,17 @@ from typing import Any
 
 REGISTRY_RELATIVE = Path(".init-harness") / "skills" / "registry.json"
 QUEUE_RELATIVE = Path(".init-harness") / "skills" / "queue"
-METHOD_SKILLS = {"init-harness", "frontend", "spec", "pilares", "commit", "offboarding", "record", "evolve"}
+METHOD_SKILLS = {
+    "init-harness",
+    "frontend",
+    "spec",
+    "pilares",
+    "commit",
+    "offboarding",
+    "record",
+    "evolve",
+    "orquestrar",
+}
 OUTCOMES = {"success", "failure", "partial", "blocked"}
 SOURCES = {"agent", "human", "test", "system"}
 # O lock só cobre a escolha do job (milissegundos): um lock antigo é resto de um worker que morreu.

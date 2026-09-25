@@ -15,7 +15,7 @@ from typing import Any
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-VERSION = "3.2.2"
+VERSION = "4.0.0"
 
 MANAGED_FILES = (
     "INIT-HARNESS.md",
@@ -34,10 +34,15 @@ MANAGED_FILES = (
     ".claude/hooks/session_start.py",
     ".claude/hooks/stop_check.py",
     ".claude/agents/auditor-pilares.md",
+    ".claude/agents/executor.md",
     ".claude/agents/revisor.md",
+    ".codex/agents/harness_executor.toml",
+    ".codex/agents/harness_auditor.toml",
+    ".codex/config.toml",
     ".githooks/pre-commit",
     ".githooks/pre_commit.py",
     ".init-harness/schema/config.schema.json",
+    ".init-harness/schema/orquestracao.schema.json",
     "tests/guardrails/__init__.py",
     "tests/guardrails/test_guardrails.py",
 )
@@ -49,6 +54,7 @@ MANAGED_TREES = (
     ".claude/skills/spec",
     ".claude/skills/record",
     ".claude/skills/evolve",
+    ".claude/skills/orquestrar",
 )
 PROJECT_TEMPLATES = {
     "CLAUDE.md": ".claude/skills/init-harness/templates/CLAUDE.template.md",
@@ -66,6 +72,20 @@ LEGACY_REPLACEMENTS = (
     ("settings.harness.json", "settings.init-harness.json"),
     ("harness.template.json", "config.template.json"),
     ("cold-start", "init-harness"),
+)
+LEGACY_AGENT_SUBAGENT_RULE = (
+    "- Usar subagentes somente quando as instruções ativas permitirem e houver\n"
+    "  paralelismo real; subagentes nunca editam `docs/ai/`."
+)
+MULTIAGENT_AGENT_RULE = (
+    "- Em toda solicitação de implementação, ler `.claude/skills/orquestrar/SKILL.md`.\n"
+    "  Ler `.init-harness/orquestracao.json` e perguntar qual perfil será a base desta atividade;\n"
+    "  registrar a escolha na frente correspondente.\n"
+    "  O agente principal coordena e delega a execução; não implementa diretamente\n"
+    "  subtarefas atribuídas. Usar `harness_executor` para executar e\n"
+    "  `harness_auditor` para revisar o diff agregado em sandbox somente de leitura.\n"
+    "- Se o cliente ou a sessão não disponibilizar subagentes, informar a limitação e\n"
+    "  parar antes de implementar em modo de agente único."
 )
 
 
@@ -248,6 +268,21 @@ def create_project_files(source: Path, target: Path, providers: list[str], repor
             dst.write_text(content, encoding="utf-8")
 
 
+def migrate_multiagent_adapter(target: Path, providers: list[str], reporter: Reporter) -> None:
+    """Atualiza apenas a regra padrão antiga de subagentes no AGENTS.md."""
+    if "codex" not in providers:
+        return
+    path = target / "AGENTS.md"
+    if not path.is_file():
+        return
+    content = path.read_text(encoding="utf-8", errors="replace")
+    if LEGACY_AGENT_SUBAGENT_RULE not in content:
+        return
+    reporter.change("atualizar regra padrão de subagentes em AGENTS.md")
+    if not reporter.dry_run:
+        path.write_text(content.replace(LEGACY_AGENT_SUBAGENT_RULE, MULTIAGENT_AGENT_RULE), encoding="utf-8")
+
+
 def config_data(
     source: Path, mode: str, providers: list[str], graph: str, memory_mcp: bool, bootstrap: bool
 ) -> dict[str, Any]:
@@ -282,6 +317,7 @@ def install_config(
         data.setdefault("autonomia", defaults["autonomia"])
         data.setdefault("memoria", defaults["memoria"])
         data.setdefault("bootstrap", defaults["bootstrap"])
+        data.setdefault("orquestracao", defaults["orquestracao"])
         if bootstrap:
             data["bootstrap"]["opt_in"] = True
         if json.dumps(data, sort_keys=True) != original:
@@ -294,6 +330,20 @@ def install_config(
         if not reporter.dry_run:
             write_json(destination, data)
     return data
+
+
+def install_orchestration_config(source: Path, target: Path, reporter: Reporter) -> None:
+    """Cria os perfis iniciais sem substituir escolhas locais em instalações existentes."""
+    destination = target / ".init-harness/orquestracao.json"
+    if destination.exists():
+        reporter.preserve(".init-harness/orquestracao.json (perfis de agentes configurados pelo projeto)")
+        return
+    template = source / ".claude/skills/orquestrar/templates/orquestracao.template.json"
+    data = load_json(template)
+    data["$schema"] = "./schema/orquestracao.schema.json"
+    reporter.change("criar .init-harness/orquestracao.json com perfis iniciais de agentes")
+    if not reporter.dry_run:
+        write_json(destination, data)
 
 
 def replace_legacy_references(target: Path, reporter: Reporter) -> None:
@@ -509,8 +559,10 @@ def run_install(args: argparse.Namespace, source: Path) -> int:
     providers = list(dict.fromkeys(args.providers))
     copy_managed(source, target, reporter)
     create_project_files(source, target, providers, reporter)
+    migrate_multiagent_adapter(target, providers, reporter)
     install_settings(source, target, providers, reporter)
     install_config(source, target, args.mode, providers, args.graph, args.memory_mcp, args.bootstrap, reporter)
+    install_orchestration_config(source, target, reporter)
     append_lines(
         target / ".gitignore",
         [

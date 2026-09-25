@@ -1,6 +1,6 @@
 # INIT-HARNESS.md
 
-> **harness_version: 3.2.2**
+> **harness_version: 4.0.0**
 > Protocolo de operação genérico, válido para qualquer projeto. O que o projeto **é** fica em `CLAUDE.md` e `docs/ai/`. Aqui fica **como** operar. Este arquivo não é editado por projeto.
 
 ---
@@ -32,7 +32,8 @@
 | `.init-harness/memory/index.sqlite` | Índice FTS local de `docs/ai/`, specs e instruções | Reconstruído no briefing ou consulta | Ferramenta; nunca é fonte de verdade nem é versionado |
 | `.init-harness/config.json` | Versão, modo, grafo, detecção de ambiente, limite de inatividade de frente | Implantação, atualização, offboarding, ambiente novo | Implantação. Ambientes e inatividade só com confirmação do usuário. |
 | `.claude/settings.json`, `.claude/hooks/`, `.githooks/` | Enforcement (seção 9) | Mudança de guardrail | Implantação. **O agente nunca altera por conta própria.** |
-| `.claude/agents/` | Subagentes `revisor` e `auditor-pilares` (somente leitura) | Mudança de protocolo | Implantação |
+| `.claude/agents/` | `executor` (escrita delimitada), `revisor` e `auditor-pilares` (somente leitura) | Mudança de protocolo | Implantação |
+| `.codex/agents/` | Agentes Codex `harness_executor` e `harness_auditor` | Mudança de protocolo | Implantação |
 | `AGENTS.md` | Adaptador do protocolo para Codex e outros agentes que o reconheçam | Integração do agente muda; regras do projeto continuam em `CLAUDE.md` | Implantação ou agente principal |
 | `tests/guardrails/` | Testes do núcleo e dos classificadores do harness | Guardrail ou formato interpretado pelo harness muda | Implantação |
 
@@ -40,7 +41,7 @@
 
 ```json
 {
-  "harness_version": "3.2.2",
+  "harness_version": "4.0.0",
   "modo": "proprio",
   "instalado_em": "AAAA-MM-DD",
   "providers": ["claude", "codex"],
@@ -332,13 +333,30 @@ Política é regra deliberada que só este projeto tem, declarada pelo dono do p
 
 ## 12. Subagentes e prompts
 
-- **Só abrir subagente** com paralelismo real ou necessidade de isolar contexto (pesquisa extensa, revisão independente do que eu mesmo escrevi).
-- **Contexto herdado**, quando o subagente precisa do que já foi acumulado e o ruído da investigação não deve voltar. **Agente novo**, quando a tarefa cabe num briefing autocontido. Nomes de ferramenta e tipos de subagente variam por plataforma: usar os disponíveis na sessão e os definidos em `.claude/agents/` quando estiver no Claude Code.
-- **Nunca delegar entendimento.** O prompt cita `arquivo:linha` e o que mudar. Nunca "com base no que encontrar, implemente".
-- **Paralelizar só o independente.** Nunca N agentes numa cadeia sequencial.
-- **Prompt delegado** é diretivo e declara: dentro do escopo, fora do escopo, o que outra frente já cobre, formato de saída.
-- Subagente não escreve em `docs/ai/` (seção 6).
-- Subagentes do harness em `.claude/agents/`: `revisor` (confere checkpoint contra spec antes do commit) e `auditor-pilares` (usado pela skill `pilares`). Ambos somente leitura.
+- Antes de delegar uma atividade, ler `.init-harness/orquestracao.json` e perguntar qual perfil será a configuração base daquela atividade. Mostrar os perfis e seus papéis; se o próprio pedido indicar um ID existente, usar essa escolha. Gravar o ID do perfil e o modelo efetivo do coordenador na frente correspondente; nunca usar um campo global de perfil ativo, pois frentes simultâneas podem escolher configurações diferentes.
+- O provedor do coordenador precisa corresponder ao cliente atual. `modelo: sessao` mantém o modelo que já está ativo; para um modelo explícito, confirmar que a sessão está usando esse modelo antes de iniciar.
+- Perfis `nativo` chamam subagentes do cliente atual. Perfis `cli` chamam `.claude/skills/orquestrar/scripts/invocar_agentes.py`, que inicia Claude Code ou Codex headless com o provedor/modelo do arquivo. Para o modo CLI, o executável precisa estar instalado e autenticado.
+- Toda solicitação de implementação segue `.claude/skills/orquestrar/SKILL.md`: o agente principal atua como coordenador e delega a implementação a um ou mais executores. Ele não escreve código de produto nem implementa subtarefas; se a integração exigir edição, cria uma subtarefa para um executor.
+- O coordenador entende o pedido, lê instruções e specs, mapeia o impacto e define critérios de aceite antes de delegar. Não delega exploração aberta: cada tarefa deve citar contexto, objetivo e resultado verificável.
+- Para pedidos com várias tarefas, mantenha uma fila identificada na seção `Tarefas delegadas` de uma única frente, com estados `pendente`, `pronta`, `em andamento`, `bloqueada`, `concluída` e `auditada`. Inicie todas as tarefas prontas até preencher as vagas e atribua a próxima tarefa pronta quando um executor terminar. Registre o resumo de cada retorno antes da auditoria agregada.
+- O limite padrão vem de `orquestracao.limite_executores` em `.init-harness/config.json` e é 3. Respeite também o limite efetivo do cliente. Para alterá-lo, ajuste `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` em `.claude/settings.json` ou `agents.max_concurrent_threads_per_session` em `.codex/config.toml`.
+- Para modo CLI, o runner limita chamadas externas por atividade com `limite_chamadas_cli_por_atividade` de `.init-harness/orquestracao.json`; o ledger SQLite guarda apenas ID da frente, papel, perfil, provedor, modelo e horário. Ele não registra prompt, resposta nem custo monetário.
+- Cada cliente define modelos nos próprios perfis: Claude Code usa o modelo da sessão para o coordenador, Sonnet como executor inicial e Opus como auditor inicial; Codex usa o modelo selecionado na sessão como coordenador e GPT-6 Luna com raciocínio `high` para executor e auditor. Os arquivos dos agentes podem ser alterados para outros modelos disponíveis.
+- Use o menor número de executores que permita paralelismo seguro. Um executor pode assumir um grupo coeso de arquivos ou tarefas; não crie um agente por arquivo. Tarefas independentes podem rodar em paralelo; dependências e arquivos compartilhados exigem sequência.
+- Cada executor recebe arquivos autorizados e um dono exclusivo por arquivo em cada etapa. Nunca permita que dois agentes escrevam simultaneamente no mesmo arquivo. Arquivo necessário fora do escopo volta ao coordenador para redistribuição.
+- Antes da delegação, registre `HEAD`, branch e `git status` para proteger mudanças anteriores. Executor não edita arquivo que já estava alterado, salvo autorização explícita e separação clara dos diffs.
+- Executor relata conclusão, resumo, arquivos alterados, verificações, riscos e bloqueios. Coordenador espera todos os executores, compara os relatos com `git status --short`, `git diff` e `git diff --staged`, abre diretamente arquivos untracked e coordena a integração após cessarem as escritas.
+- Worktrees isoladas podem ser usadas se o cliente as oferecer; o coordenador registra a base e delega a integração a um executor, em sequência. Em conflito, abre subtarefa explícita de integração e só depois pede auditoria novamente.
+- Antes da auditoria, o coordenador atualiza seus próprios registros operacionais, incluindo `docs/ai/`, para que façam parte do diff revisado. Após aprovação, nenhum arquivo é alterado; qualquer edição necessária volta a executor e exige nova auditoria.
+- Auditoria independente do diff agregado é obrigatória. O auditor é outro agente, não participa da implementação e trabalha somente em leitura depois que todos os executores pararem. Ele devolve `APROVADA` ou `REPROVADA` com achados `arquivo:linha`. Achado bloqueante exige correção delegada e nova auditoria.
+- Só concluir quando a auditoria aprovar, as validações finais forem relatadas e o coordenador registrar o checkpoint. O auditor não corrige arquivos.
+- Se a sessão não disponibilizar subagentes, informe a limitação e pare antes de implementar em modo de agente único.
+- Agentes do harness: Claude Code usa `.claude/agents/executor.md` e `.claude/agents/revisor.md`; Codex usa `.codex/agents/harness_executor.toml` e `.codex/agents/harness_auditor.toml`. `auditor-pilares` segue específico da skill `pilares`.
+- Subagente não escreve em `docs/ai/`; os registros e handoffs pertencem ao coordenador.
+- Executor e auditor não fazem commit, push, merge, release, deploy ou ação destrutiva. Gates de autorização existentes continuam válidos.
+- Faça uma auditoria do diff agregado por atividade e repita somente quando houver correções. Subagentes consomem chamadas adicionais de modelo e ferramentas: limitar concorrência reduz o pico, mas não garante custo igual ou menor. Não mantenha agente ativo sem tarefa independente.
+- Perfis CLI podem cruzar Claude Code e Codex ao iniciar os respectivos executáveis headless. Cada provedor usa sua conta e suas cotas; o limite de chamadas não é um teto de dinheiro. Prefira o modo nativo quando não precisar cruzar provedores.
+- Subtarefas de uma atividade compartilham uma única frente e quadro de tarefas; não crie uma frente por executor. Frentes de produto distintas permanecem separadas em branches/worktrees para proteger a posse e evitar concorrência de arquivos.
 
 ---
 
@@ -400,9 +418,9 @@ Detalhes na skill `commit`. Regra de ouro: **mensagem nasce do diff, nunca da me
 | | `proprio` | `cliente` |
 |---|---|---|
 | `INIT-HARNESS.md` | Versionado, permanente | `.git/info/exclude`, removido no offboarding |
-| Skills de método (`init-harness`, `frontend`, `spec`, `pilares`, `commit`, `offboarding`) | Versionadas | `.git/info/exclude`, removidas no offboarding |
+| Skills de método (`init-harness`, `frontend`, `spec`, `pilares`, `commit`, `offboarding`, `orquestrar`) | Versionadas | `.git/info/exclude`, removidas no offboarding |
 | `.claude/agents/auditor-pilares.md`, `.claude/settings.init-harness.json` | Versionados | `.git/info/exclude`, removidos no offboarding |
-| `.claude/agents/revisor.md` | Versionado | Versionado, permanece |
+| `.claude/agents/executor.md`, `.claude/agents/revisor.md`, `.codex/agents/harness_executor.toml`, `.codex/agents/harness_auditor.toml` | Versionados | Versionados, permanecem |
 | `CLAUDE.md`, `docs/ai/`, `specs/` | Versionados | Versionados, permanecem |
 | `AGENTS.md` | Versionado quando Codex for suportado | Versionado, permanece |
 | `.claude/settings.json`, `.claude/hooks/`, `.githooks/` | Versionados | Versionados, permanecem |
@@ -425,6 +443,7 @@ A camada que permanece no modo `cliente` precisa operar sem este arquivo. O offb
 | `evolve` | Sugestão ou proposta de skill sem candidata escrita |
 | `offboarding` | Encerramento de implantação em modo `cliente` |
 | `frontend` | Qualquer criação, revisão, correção ou alteração de interface frontend |
+| `orquestrar` | Toda solicitação de implementação ou alteração de software |
 
 Diagnóstico da instalação: `uv run --no-project --python ">=3.10" .claude/hooks/doctor.py`.
 
