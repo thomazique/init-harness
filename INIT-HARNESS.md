@@ -1,6 +1,6 @@
 # INIT-HARNESS.md
 
-> **harness_version: 3.1.0**
+> **harness_version: 3.2.0**
 > Protocolo de operação genérico, válido para qualquer projeto. O que o projeto **é** fica em `CLAUDE.md` e `docs/ai/`. Aqui fica **como** operar. Este arquivo não é editado por projeto.
 
 ---
@@ -40,7 +40,7 @@
 
 ```json
 {
-  "harness_version": "3.1.0",
+  "harness_version": "3.2.0",
   "modo": "proprio",
   "instalado_em": "AAAA-MM-DD",
   "providers": ["claude", "codex"],
@@ -400,7 +400,7 @@ Detalhes na skill `commit`. Regra de ouro: **mensagem nasce do diff, nunca da me
 | | `proprio` | `cliente` |
 |---|---|---|
 | `INIT-HARNESS.md` | Versionado, permanente | `.git/info/exclude`, removido no offboarding |
-| Skills de método (`init-harness`, `spec`, `pilares`, `commit`, `offboarding`) | Versionadas | `.git/info/exclude`, removidas no offboarding |
+| Skills de método (`init-harness`, `frontend`, `spec`, `pilares`, `commit`, `offboarding`) | Versionadas | `.git/info/exclude`, removidas no offboarding |
 | `.claude/agents/auditor-pilares.md`, `.claude/settings.init-harness.json` | Versionados | `.git/info/exclude`, removidos no offboarding |
 | `.claude/agents/revisor.md` | Versionado | Versionado, permanece |
 | `CLAUDE.md`, `docs/ai/`, `specs/` | Versionados | Versionados, permanecem |
@@ -424,6 +424,7 @@ A camada que permanece no modo `cliente` precisa operar sem este arquivo. O offb
 | `record` | Registro de experiência relevante para evolução de skill |
 | `evolve` | Sugestão ou proposta de skill sem candidata escrita |
 | `offboarding` | Encerramento de implantação em modo `cliente` |
+| `frontend` | Qualquer criação, revisão, correção ou alteração de interface frontend |
 
 Diagnóstico da instalação: `uv run --no-project --python ">=3.10" .claude/hooks/doctor.py`.
 
@@ -470,7 +471,7 @@ python .claude/hooks/skill_evolution.py status
 ```
 
 `sync` escreve `.init-harness/skills/registry.json` e um `manifest.json` por skill.
-Skills `init-harness`, `spec`, `pilares`, `commit`, `offboarding`, `record` e `evolve` são classificadas
+Skills `init-harness`, `frontend`, `spec`, `pilares`, `commit`, `offboarding`, `record` e `evolve` são classificadas
 como método; as demais são classificadas como skills próprias do projeto. O catálogo
 preserva versão, status, risco e data da última avaliação para as próximas etapas de
 proposta e avaliação.

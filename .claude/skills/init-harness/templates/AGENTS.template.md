@@ -31,3 +31,12 @@
 - Preservar alterações preexistentes do usuário.
 - Usar subagentes somente quando as instruções ativas permitirem e houver
   paralelismo real; subagentes nunca editam `docs/ai/`.
+
+## Trabalho de frontend
+
+Em qualquer tarefa de interface frontend — criação, revisão, correção,
+layout, estilo, responsividade, acessibilidade ou componentes — ler primeiro
+`.claude/skills/frontend/SKILL.md` e as referências pertinentes. A skill é
+agnóstica de framework: identificar a stack, os padrões e as ferramentas do
+projeto antes de agir; tratar exemplos da skill como orientação, não como
+decisões de produto.

@@ -1,11 +1,49 @@
-# init-harness 3.1.0
+# init-harness 3.2.0
 
-Inicializa repositórios Git para trabalho contínuo com agentes de IA. A versão
-3.0 introduziu um ciclo controlado de aprendizado de skills e a 3.1 o fecha: a skill
-usada na sessão é ativada sozinha, o projeto coleta experiências, um agente econômico
-faz a triagem em background, um revisor caro só vê o que exige julgamento, a aprovação
-humana abre uma proposta, a skill `evolve` escreve a candidata e a promoção só acontece
-depois de uma avaliação e de uma decisão humana explícita.
+`init-harness` instala e atualiza uma base operacional para trabalhar com agentes de IA em
+repositórios Git. Mantém protocolo e contexto do projeto em arquivos versionáveis, registra
+o andamento entre sessões, conecta memória local e grafo de código, e adiciona skills e
+guardrails ao fluxo de trabalho. O harness serve a projetos diferentes: preserva os arquivos
+do projeto e adapta suas instruções ao código e às ferramentas existentes.
+
+A versão **3.2.0** adiciona uma skill de frontend generalizada para qualquer stack: agentes
+devem consultá-la em toda tarefa de interface, descobrir primeiro o contexto do projeto e
+seguir seus próprios padrões de produto. O analisador incluído é consultivo por padrão e só
+falha quando o projeto opta por `--strict`.
+
+## O que o harness oferece
+
+- **Instalação e atualização seguras:** `install`, `upgrade` e `doctor`; preserva arquivos
+  existentes e apresenta mudanças de arquivos gerenciados para revisão.
+- **Continuidade entre sessões:** frentes, checkpoints, specs, decisões, débitos e handoffs
+  documentam estado, próximos passos e contexto de implementação.
+- **Memória pesquisável local:** índice reconstruível SQLite FTS5 para Markdown, consulta e
+  briefing; o texto versionável permanece a fonte de verdade. Integração MCP é opcional.
+- **Grafo de código e impacto:** integração com Graphify para consultar estrutura, caminhos e
+  arquivos afetados. O modo manual permite instalar sem Graphify.
+- **Protocolos e guardrails:** adaptadores para Claude Code e Codex, skills operacionais,
+  hooks e verificações Git para reduzir riscos no fluxo de edição.
+- **Aprendizado controlado de skills:** captura experiências locais, agrupa sugestões,
+  mantém fila e propostas, avalia candidatas e exige decisão humana antes de promover uma
+  skill ativa.
+- **Bootstrap revisável:** opcional; mapeia o projeto existente e prepara contexto inicial,
+  mantendo hipóteses arquiteturais como propostas revisáveis.
+- **Modo de implantação:** `proprio` mantém o método no projeto; `cliente` exclui os arquivos
+  de método do versionamento e os remove no offboarding.
+
+## Destaque da versão 3.2: frontend adaptável
+
+A skill `.claude/skills/frontend/` cobre criação, revisão e correção de páginas, telas,
+componentes, navegação, estilos, tokens, acessibilidade, estados, layout responsivo e motion.
+Ela não exige um framework ou diretório específico. Antes de editar, orienta o agente a ler as
+instruções locais, detectar a stack, encontrar o tema e os componentes já usados, entender a
+tarefa e escolher as validações do próprio projeto.
+
+As referências dividem o método por decisão visual (Operate/Persuade), sistema de tokens,
+componentes e acessibilidade, movimento e layout e revisão. O analisador Python opcional cobre
+alguns padrões mecânicos em arquivos web e Dart; seus diagnósticos são heurísticos, não uma
+medida universal de qualidade. O modo bloqueante `--strict` só é indicado quando a equipe
+decidir que essas regras se aplicam à sua stack.
 
 > Estado: projeto em evolução. O harness ajuda a estruturar trabalho com IA,
 > mas não substitui revisão humana, sandbox, CI, backups ou controles de acesso.

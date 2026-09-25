@@ -15,7 +15,7 @@ from typing import Any
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-VERSION = "3.1.0"
+VERSION = "3.2.0"
 
 MANAGED_FILES = (
     "INIT-HARNESS.md",
@@ -43,6 +43,7 @@ MANAGED_FILES = (
 )
 MANAGED_TREES = (
     ".claude/skills/init-harness",
+    ".claude/skills/frontend",
     ".claude/skills/commit",
     ".claude/skills/pilares",
     ".claude/skills/spec",

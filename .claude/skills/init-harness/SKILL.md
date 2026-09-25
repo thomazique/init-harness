@@ -22,6 +22,7 @@ Cada passo é um checkpoint. Ao final de cada um: o que foi feito e qual o próx
    ```
    INIT-HARNESS.md
    .claude/skills/init-harness/
+   .claude/skills/frontend/
    .claude/skills/spec/
    .claude/skills/pilares/
    .claude/skills/commit/

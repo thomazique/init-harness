@@ -1,5 +1,20 @@
 # Changelog
 
+## 3.2.0 — skill de frontend adaptável ao projeto
+
+### Adicionado
+
+- Skill de frontend agnóstica de framework, acionada para criar, revisar ou alterar interfaces web, mobile e desktop. Antes de propor mudanças, identifica stack, padrões de produto e ferramentas do repositório.
+- Integração da skill ao instalador, ao catálogo de skills do harness e aos templates de `AGENTS.md` e `CLAUDE.md`, para ser consultada em qualquer tarefa de frontend.
+- Analisador de padrões de frontend em modo consultivo por padrão, com opção `--strict` quando as regras forem adotadas pelo projeto.
+
+### Alterado
+
+- As referências de modos de interface, tokens, componentes, acessibilidade, motion, layout e revisão foram generalizadas para projetos e plataformas diferentes.
+- As heurísticas do analisador deixam de bloquear por padrão; formatos e diretórios gerados comuns foram ampliados para uso em stacks diversas.
+
+## [Unreleased]
+
 ## 3.1.0 — ciclo de evolução de skills completo
 
 - Ajustes apontados por testes com um agente real (`claude -p`) e com `upgrade` de projetos 3.0: a skill `evolve` traz a sintaxe do `accept`, pede `--owner` sem e-mail (o campo é versionado) e manda decisões de política ao usuário; o `doctor` aponta o `.new` do kit quando uma skill editada localmente está quebrada; e `configure-usage` grava o risco também no manifesto, que divergia do contrato.
@@ -35,10 +50,6 @@
 O harness permanece agnóstico de provedor: cada projeto conecta seus próprios runners
 econômico e caro. Nenhum worker promove uma skill ou altera o `SKILL.md` ativo sem
 avaliação e aprovação explícitas.
-
-## [Unreleased]
-
-Próximas melhorias permanecem condicionadas à validação em projetos reais.
 
 ## [2.3.2] - 2026-09-17
 

@@ -13,6 +13,10 @@
 
 ## Operação
 
+Em qualquer trabalho de frontend, leia `.claude/skills/frontend/SKILL.md` e as
+referências aplicáveis antes de alterar a interface. Identifique a stack e os
+padrões existentes do projeto; exemplos da skill não definem o produto.
+
 Ponto de entrada de toda sessão:
 
 1. `.init-harness/config.json`: modo, grafo, ambientes, limite de inatividade de frente.

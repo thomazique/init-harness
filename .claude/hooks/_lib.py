@@ -105,6 +105,7 @@ CODIGO_NOMES = {
 METODO_CLIENTE = (
     "INIT-HARNESS.md",
     ".claude/skills/init-harness/",
+    ".claude/skills/frontend/",
     ".claude/skills/spec/",
     ".claude/skills/record/",
     ".claude/skills/evolve/",
