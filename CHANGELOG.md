@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.2.2 — verificador de frontend protegido por testes
+
+### Testes
+
+- Adicionada cobertura de contrato para os modos consultivo e `--strict`, avisos sem bloqueio, remoção de comentários, exclusão de arquivos gerados/minificados e cores definidas em tokens.
+
 ## 3.2.1 — regressões de upgrade cobertas por testes
 
 ### Testes
