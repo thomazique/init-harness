@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-
 EXTENSOES = {
     ".css",
     ".scss",
@@ -299,7 +298,8 @@ def verificar_arquivo(caminho: Path) -> list[Diagnostico]:
             linha_do_offset(codigo, correspondencia.start()),
             "VIOLACAO",
             "fonte de display popular",
-            "nao use Inter, Poppins, Roboto, Open Sans, Lato ou Montserrat como voz de display sem decisao explicita do produto",
+            "nao use Inter, Poppins, Roboto, Open Sans, Lato ou Montserrat como voz de display sem "
+            "decisao explicita do produto",
         )
 
     blocos = extrair_blocos_css(codigo)
@@ -330,7 +330,8 @@ def verificar_arquivo(caminho: Path) -> list[Diagnostico]:
                 linha_do_offset(codigo, bloco.inicio),
                 "AVISO",
                 "estado de foco possivelmente ausente",
-                f"heuristica: `{seletor}` tem `:hover`, mas nao ha seletor correspondente com `:focus-visible` no arquivo; confirme o estado de teclado (pode haver excecao legitima)",
+                f"heuristica: `{seletor}` tem `:hover`, mas nao ha seletor correspondente com `:focus-visible` no "
+                "arquivo; confirme o estado de teclado (pode haver excecao legitima)",
             )
 
         if RE_TRANSFORM_ESCALA.search(bloco.corpo):
