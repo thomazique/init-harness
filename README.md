@@ -1,4 +1,4 @@
-# init-harness 3.2.0
+# init-harness 3.2.1
 
 `init-harness` instala e atualiza uma base operacional para trabalhar com agentes de IA em
 repositórios Git. Mantém protocolo e contexto do projeto em arquivos versionáveis, registra
@@ -6,10 +6,13 @@ o andamento entre sessões, conecta memória local e grafo de código, e adicion
 guardrails ao fluxo de trabalho. O harness serve a projetos diferentes: preserva os arquivos
 do projeto e adapta suas instruções ao código e às ferramentas existentes.
 
-A versão **3.2.0** adiciona uma skill de frontend generalizada para qualquer stack: agentes
-devem consultá-la em toda tarefa de interface, descobrir primeiro o contexto do projeto e
-seguir seus próprios padrões de produto. O analisador incluído é consultivo por padrão e só
-falha quando o projeto opta por `--strict`.
+A versão **3.2.1** adiciona testes de regressão para os caminhos de atualização segura do
+instalador: baseline do kit sem baseline anterior, hooks customizados sem `args`, referências
+a débitos fora das tabelas e limpeza de candidatos `.new` resolvidos. A versão **3.2.0**
+adicionou uma skill de frontend generalizada para qualquer stack: agentes devem consultá-la em
+toda tarefa de interface, descobrir primeiro o contexto do projeto e seguir seus próprios
+padrões de produto. O analisador incluído é consultivo por padrão e só falha quando o projeto
+opta por `--strict`.
 
 ## O que o harness oferece
 

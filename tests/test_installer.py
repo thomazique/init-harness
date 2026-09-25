@@ -6,6 +6,7 @@ import contextlib
 import io
 import json
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -34,6 +35,13 @@ def git_init(path: Path) -> None:
 
 
 class InstallerTest(unittest.TestCase):
+    def _copy_managed_kit(self, destination: Path) -> None:
+        for relative in init_harness.managed_paths(KIT):
+            source = KIT / relative
+            copied = destination / relative
+            copied.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, copied)
+
     def test_instalacao_preserva_projeto_e_e_idempotente(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "projeto"
@@ -206,6 +214,43 @@ class InstallerTest(unittest.TestCase):
             self.assertEqual(0, init_harness.main(["upgrade", "--target", str(target)], KIT))
             self.assertEqual(historical, decision.read_text(encoding="utf-8"))
 
+    def test_upgrade_sem_baseline_grava_conteudo_do_kit_e_preserva_edicao_local(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            kit = root / "kit"
+            kit.mkdir()
+            self._copy_managed_kit(kit)
+            target = root / "projeto"
+            target.mkdir()
+            git_init(target)
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(0, init_harness.main(["install", "--target", str(target)], kit))
+
+            shutil.rmtree(target / ".init-harness/managed-baselines")
+            relative = "INIT-HARNESS.md"
+            local = target / relative
+            baseline = init_harness._managed_baseline(target, relative)
+            candidate = init_harness._managed_candidate(target, relative)
+            kit_content = (kit / relative).read_bytes()
+            local_content = b"# Contexto local preservado\n"
+            local.write_bytes(local_content)
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(0, init_harness.main(["upgrade", "--target", str(target)], kit))
+
+            self.assertEqual(kit_content, baseline.read_bytes())
+            self.assertEqual(local_content, local.read_bytes())
+            self.assertEqual(kit_content, candidate.read_bytes())
+
+            updated_kit_content = kit_content + b"\n<!-- nova versao do kit -->\n"
+            (kit / relative).write_bytes(updated_kit_content)
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(0, init_harness.main(["upgrade", "--target", str(target)], kit))
+
+            self.assertEqual(local_content, local.read_bytes())
+            self.assertEqual(updated_kit_content, candidate.read_bytes())
+
     def test_merge_settings_preserva_hook_customizado_equivalente(self) -> None:
         required = {
             "hooks": [
@@ -226,6 +271,112 @@ class InstallerTest(unittest.TestCase):
         merged = init_harness.merge_settings(current, required)
         self.assertEqual(1, len(merged["hooks"]))
         self.assertEqual("env UV=/opt/uv uv", merged["hooks"][0]["hooks"][0]["command"])
+
+    def test_merge_settings_preserva_hook_customizado_sem_args(self) -> None:
+        local_command = "PATH=/opt/uv/bin:$PATH uv run --no-project --python '>=3.10' .claude/hooks/guard_bash.py"
+        required = {
+            "hooks": [
+                {
+                    "matcher": "Bash",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": "uv",
+                            "args": ["run", "--no-project", "--python", ">=3.10", ".claude/hooks/guard_bash.py"],
+                        }
+                    ],
+                }
+            ]
+        }
+        current = {
+            "hooks": [
+                {
+                    "matcher": "Bash",
+                    "hooks": [{"type": "command", "command": local_command}],
+                }
+            ]
+        }
+
+        merged = init_harness.merge_settings(current, required)
+
+        self.assertEqual(1, len(merged["hooks"]))
+        self.assertEqual(local_command, merged["hooks"][0]["hooks"][0]["command"])
+        self.assertNotIn("args", merged["hooks"][0]["hooks"][0])
+
+    def test_doctor_ignora_referencia_textual_a_debito_e_detecta_linha_duplicada(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "projeto"
+            target.mkdir()
+            git_init(target)
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(
+                    0,
+                    init_harness.main(["install", "--target", str(target), "--graph", "manual"], KIT),
+                )
+
+            debts = target / "docs/ai/DEBITOS.md"
+            debts.write_text(
+                "# Débitos\n\n"
+                "| ID | Status | Descrição |\n"
+                "| --- | --- | --- |\n"
+                "| DB-0001 | aberto | Primeiro débito |\n"
+                "| DB-0002 | aberto | Segundo débito |\n\n"
+                "Ver também DB-0001.\n",
+                encoding="utf-8",
+            )
+
+            doctor_script = target / ".claude/hooks/doctor.py"
+            no_duplicate = subprocess.run(
+                [sys.executable, str(doctor_script)], cwd=target, capture_output=True, text=True, check=False
+            )
+            self.assertEqual(0, no_duplicate.returncode, no_duplicate.stdout + no_duplicate.stderr)
+            self.assertNotIn("ID duplicado DB-0001", no_duplicate.stdout)
+
+            debts.write_text(
+                debts.read_text(encoding="utf-8").replace(
+                    "| DB-0002 | aberto | Segundo débito |", "| DB-0001 | aberto | Segundo débito |"
+                ),
+                encoding="utf-8",
+            )
+            duplicate = subprocess.run(
+                [sys.executable, str(doctor_script)], cwd=target, capture_output=True, text=True, check=False
+            )
+            self.assertEqual(1, duplicate.returncode, duplicate.stdout + duplicate.stderr)
+            self.assertIn("ID duplicado DB-0001", duplicate.stdout)
+
+    def test_upgrade_exibe_e_limpa_candidato_new(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "projeto"
+            target.mkdir()
+            git_init(target)
+            relative = "INIT-HARNESS.md"
+            local = target / relative
+            candidate = init_harness._managed_candidate(target, relative)
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(0, init_harness.main(["install", "--target", str(target), "--graph", "manual"], KIT))
+            local.write_bytes(local.read_bytes() + b"\n<!-- Edicao local -->\n")
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(0, init_harness.main(["upgrade", "--target", str(target)], KIT))
+            self.assertTrue(candidate.is_file())
+            doctor_script = target / ".claude/hooks/doctor.py"
+            pending = subprocess.run(
+                [sys.executable, str(doctor_script)], cwd=target, capture_output=True, text=True, check=False
+            )
+            self.assertEqual(0, pending.returncode, pending.stdout + pending.stderr)
+            self.assertIn("1 atualização(ões) de kit pendentes", pending.stdout)
+
+            local.write_bytes((KIT / relative).read_bytes())
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(0, init_harness.main(["upgrade", "--target", str(target)], KIT))
+
+            self.assertFalse(candidate.exists())
+            self.assertEqual((KIT / relative).read_bytes(), local.read_bytes())
+            resolved = subprocess.run(
+                [sys.executable, str(doctor_script)], cwd=target, capture_output=True, text=True, check=False
+            )
+            self.assertEqual(0, resolved.returncode, resolved.stdout + resolved.stderr)
+            self.assertNotIn("atualização(ões) de kit pendentes", resolved.stdout)
 
     def test_modo_cliente_deriva_exclusoes_da_politica_central(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

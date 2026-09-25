@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.2.1 — regressões de upgrade cobertas por testes
+
+### Testes
+
+- Adicionados quatro testes para as correções de #13 a #16: baseline do conteúdo do kit após upgrade sem baseline, hook customizado sem `args`, referência textual a débito fora da tabela e ciclo de vida do candidato `.new`.
+- O teste de IDs duplicados também confirma que duas declarações em linhas da tabela continuam sendo detectadas.
+
 ## 3.2.0 — skill de frontend adaptável ao projeto
 
 ### Adicionado
