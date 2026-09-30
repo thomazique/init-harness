@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from iniciativa_runtime import executar_iniciativa
+
 
 def ler_config(raiz: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     caminho = raiz / ".init-harness" / "orquestracao.json"
@@ -61,8 +63,7 @@ def reservar_chamadas(
         if anteriores[1] is not None and anteriores[1] != perfil:
             raise ValueError("a frente já iniciou chamadas com outro perfil; mantenha um perfil por atividade")
         papel_anterior = conexao.execute(
-            "SELECT COUNT(*), MIN(provedor), MIN(modelo) FROM chamadas "
-            "WHERE frente = ? AND papel = ?",
+            "SELECT COUNT(*), MIN(provedor), MIN(modelo) FROM chamadas WHERE frente = ? AND papel = ?",
             (frente, papel),
         ).fetchone()
         if papel_anterior[0] and (papel_anterior[1], papel_anterior[2]) != (agente["provedor"], agente["modelo"]):
@@ -94,7 +95,7 @@ def comando_para(provedor: str, agente: dict[str, Any]) -> list[str]:
         raise ValueError("o modelo precisa usar apenas letras ASCII, números, ponto, sublinhado, dois-pontos ou hífen")
     if provedor == "claude":
         papel = agente["_papel"]
-        ferramentas = "Read,Glob,Grep" if papel == "auditor" else "Read,Edit,Write,Glob,Grep"
+        ferramentas = "Read,Glob,Grep" if papel == "auditor" else "Read,Edit,Write,Glob,Grep,Bash"
         modo = "plan" if papel == "auditor" else "acceptEdits"
         return [
             caminho_executavel,
@@ -106,7 +107,7 @@ def comando_para(provedor: str, agente: dict[str, Any]) -> list[str]:
             "--permission-mode",
             modo,
             "--tools",
-            "Read,Glob,Grep" if papel == "auditor" else "Read,Edit,Write,Glob,Grep",
+            "Read,Glob,Grep" if papel == "auditor" else "Read,Edit,Write,Glob,Grep,Bash",
             "--strict-mcp-config",
             "--mcp-config",
             '{"mcpServers":{}}',
@@ -199,12 +200,16 @@ async def executar_lote(raiz: Path, lote: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("informe 'perfil' e 'frente_id' válido no arquivo de lote")
     if papel not in {"executor", "auditor"}:
         raise ValueError("'papel' deve ser 'executor' ou 'auditor'")
-    if not isinstance(tarefas, list) or not tarefas or any(
-        not isinstance(tarefa, dict)
-        or not isinstance(tarefa.get("id"), str)
-        or not isinstance(tarefa.get("prompt"), str)
-        or not tarefa["prompt"].strip()
-        for tarefa in tarefas
+    if (
+        not isinstance(tarefas, list)
+        or not tarefas
+        or any(
+            not isinstance(tarefa, dict)
+            or not isinstance(tarefa.get("id"), str)
+            or not isinstance(tarefa.get("prompt"), str)
+            or not tarefa["prompt"].strip()
+            for tarefa in tarefas
+        )
     ):
         raise ValueError("'tarefas' deve conter objetos com 'id' e 'prompt' não vazios")
     if len({tarefa["id"] for tarefa in tarefas}) != len(tarefas):
@@ -259,12 +264,37 @@ async def executar_lote(raiz: Path, lote: dict[str, Any]) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path.cwd(), help="raiz do projeto instalado")
-    parser.add_argument("--lote", type=Path, required=True, help="JSON de tarefas e prompts; não é copiado ao log")
+    grupo = parser.add_mutually_exclusive_group(required=True)
+    grupo.add_argument("--iniciativa", type=Path, help="manifesto JSON para orquestração hierárquica")
+    grupo.add_argument("--lote", type=Path, help="JSON de tarefas e prompts; não é copiado ao log")
+    retomada = parser.add_mutually_exclusive_group()
+    retomada.add_argument("--respostas", type=Path, help="JSON com respostas humanas para retomar iniciativa pausada")
+    retomada.add_argument(
+        "--decisao-chefe", type=Path, help="JSON com approve, revise ou ask_human após auditoria final"
+    )
     parser.add_argument("--remover-lote", action="store_true", help="apaga o lote temporário depois de carregá-lo")
     args = parser.parse_args()
     raiz = args.root.resolve()
-    caminho_lote = args.lote.resolve()
     try:
+        if args.iniciativa:
+            if args.remover_lote:
+                raise ValueError("--remover-lote só pode ser usado com --lote")
+            manifesto = json.loads(args.iniciativa.resolve().read_text(encoding="utf-8"))
+            if not isinstance(manifesto, dict):
+                raise ValueError("o manifesto de iniciativa precisa conter um objeto JSON")
+            respostas = json.loads(args.respostas.resolve().read_text(encoding="utf-8")) if args.respostas else None
+            decisao = (
+                json.loads(args.decisao_chefe.resolve().read_text(encoding="utf-8")) if args.decisao_chefe else None
+            )
+            resultado = asyncio.run(executar_iniciativa(raiz, manifesto, respostas, decisao))
+            print(json.dumps(resultado, ensure_ascii=False, indent=2))
+            return 0 if resultado.get("estado") in {"aguardando_auditoria_chefe", "concluida"} else 1
+
+        if args.respostas:
+            raise ValueError("--respostas só pode ser usado com --iniciativa")
+        if args.decisao_chefe:
+            raise ValueError("--decisao-chefe só pode ser usado com --iniciativa")
+        caminho_lote = args.lote.resolve()
         lote = json.loads(caminho_lote.read_text(encoding="utf-8"))
         if args.remover_lote:
             temporarios = (raiz / ".init-harness" / "state" / "orquestracao").resolve()

@@ -9,14 +9,18 @@
       "descricao": "Claude Opus coordena e audita; Codex GPT-6 Luna executa.",
       "coordenador": {"provedor": "claude", "modelo": "opus", "modo": "sessao"},
       "executor": {"provedor": "codex", "modelo": "gpt-6-luna", "raciocinio": "high", "modo": "cli"},
-      "auditor": {"provedor": "claude", "modelo": "opus", "modo": "cli"}
+      "auditor": {"provedor": "claude", "modelo": "opus", "modo": "cli"},
+      "supervisor": {"provedor": "claude", "modelo": "opus", "modo": "cli"},
+      "construtor": {"provedor": "codex", "modelo": "gpt-6-luna", "raciocinio": "high", "modo": "cli"}
     },
     {
       "id": "codex_luna_claude_opus",
       "descricao": "Codex GPT-6 Luna coordena e executa; Claude Opus audita.",
       "coordenador": {"provedor": "codex", "modelo": "gpt-6-luna", "modo": "sessao"},
       "executor": {"provedor": "codex", "modelo": "gpt-6-luna", "raciocinio": "high", "modo": "cli"},
-      "auditor": {"provedor": "claude", "modelo": "opus", "modo": "cli"}
+      "auditor": {"provedor": "claude", "modelo": "opus", "modo": "cli"},
+      "supervisor": {"provedor": "claude", "modelo": "opus", "modo": "cli"},
+      "construtor": {"provedor": "codex", "modelo": "gpt-6-luna", "raciocinio": "high", "modo": "cli"}
     },
     {
       "id": "claude_nativo",

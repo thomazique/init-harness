@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/thomazique/init-harness/blob/main/.init-harness/schema/iniciativa.schema.json",
+  "title": "init-harness hierarchical initiative manifest",
+  "$ref": "./orquestracao.schema.json#/$defs/manifesto_iniciativa"
+}

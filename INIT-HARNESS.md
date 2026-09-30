@@ -1,6 +1,6 @@
 # INIT-HARNESS.md
 
-> **harness_version: 4.0.0**
+> **harness_version: 5.0.0**
 > Protocolo de operação genérico, válido para qualquer projeto. O que o projeto **é** fica em `CLAUDE.md` e `docs/ai/`. Aqui fica **como** operar. Este arquivo não é editado por projeto.
 
 ---
@@ -41,7 +41,7 @@
 
 ```json
 {
-  "harness_version": "4.0.0",
+  "harness_version": "5.0.0",
   "modo": "proprio",
   "instalado_em": "AAAA-MM-DD",
   "providers": ["claude", "codex"],
@@ -333,33 +333,18 @@ Política é regra deliberada que só este projeto tem, declarada pelo dono do p
 
 ## 12. Subagentes e prompts
 
-- Antes de delegar uma atividade, ler `.init-harness/orquestracao.json` e perguntar qual perfil será a configuração base daquela atividade. Mostrar os perfis e seus papéis; se o próprio pedido indicar um ID existente, usar essa escolha. Gravar o ID do perfil e o modelo efetivo do coordenador na frente correspondente; nunca usar um campo global de perfil ativo, pois frentes simultâneas podem escolher configurações diferentes.
-- O provedor do coordenador precisa corresponder ao cliente atual. `modelo: sessao` mantém o modelo que já está ativo; para um modelo explícito, confirmar que a sessão está usando esse modelo antes de iniciar.
-- Perfis `nativo` chamam subagentes do cliente atual. Perfis `cli` chamam `.claude/skills/orquestrar/scripts/invocar_agentes.py`, que inicia Claude Code ou Codex headless com o provedor/modelo do arquivo. Para o modo CLI, o executável precisa estar instalado e autenticado.
-- Toda solicitação de implementação segue `.claude/skills/orquestrar/SKILL.md`: o agente principal atua como coordenador e delega a implementação a um ou mais executores. Ele não escreve código de produto nem implementa subtarefas; se a integração exigir edição, cria uma subtarefa para um executor.
-- O coordenador entende o pedido, lê instruções e specs, mapeia o impacto e define critérios de aceite antes de delegar. Não delega exploração aberta: cada tarefa deve citar contexto, objetivo e resultado verificável.
-- Para pedidos com várias tarefas, mantenha uma fila identificada na seção `Tarefas delegadas` de uma única frente, com estados `pendente`, `pronta`, `em andamento`, `bloqueada`, `concluída` e `auditada`. Inicie todas as tarefas prontas até preencher as vagas e atribua a próxima tarefa pronta quando um executor terminar. Registre o resumo de cada retorno antes da auditoria agregada.
-- O limite padrão vem de `orquestracao.limite_executores` em `.init-harness/config.json` e é 3. Respeite também o limite efetivo do cliente. Para alterá-lo, ajuste `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` em `.claude/settings.json` ou `agents.max_concurrent_threads_per_session` em `.codex/config.toml`.
-- Para modo CLI, o runner limita chamadas externas por atividade com `limite_chamadas_cli_por_atividade` de `.init-harness/orquestracao.json`; o ledger SQLite guarda apenas ID da frente, papel, perfil, provedor, modelo e horário. Ele não registra prompt, resposta nem custo monetário.
-- Cada cliente define modelos nos próprios perfis: Claude Code usa o modelo da sessão para o coordenador, Sonnet como executor inicial e Opus como auditor inicial; Codex usa o modelo selecionado na sessão como coordenador e GPT-6 Luna com raciocínio `high` para executor e auditor. Os arquivos dos agentes podem ser alterados para outros modelos disponíveis.
-- Use o menor número de executores que permita paralelismo seguro. Um executor pode assumir um grupo coeso de arquivos ou tarefas; não crie um agente por arquivo. Tarefas independentes podem rodar em paralelo; dependências e arquivos compartilhados exigem sequência.
-- Cada executor recebe arquivos autorizados e um dono exclusivo por arquivo em cada etapa. Nunca permita que dois agentes escrevam simultaneamente no mesmo arquivo. Arquivo necessário fora do escopo volta ao coordenador para redistribuição.
-- Antes da delegação, registre `HEAD`, branch e `git status` para proteger mudanças anteriores. Executor não edita arquivo que já estava alterado, salvo autorização explícita e separação clara dos diffs.
-- Executor relata conclusão, resumo, arquivos alterados, verificações, riscos e bloqueios. Coordenador espera todos os executores, compara os relatos com `git status --short`, `git diff` e `git diff --staged`, abre diretamente arquivos untracked e coordena a integração após cessarem as escritas.
-- Worktrees isoladas podem ser usadas se o cliente as oferecer; o coordenador registra a base e delega a integração a um executor, em sequência. Em conflito, abre subtarefa explícita de integração e só depois pede auditoria novamente.
-- Antes da auditoria, o coordenador atualiza seus próprios registros operacionais, incluindo `docs/ai/`, para que façam parte do diff revisado. Após aprovação, nenhum arquivo é alterado; qualquer edição necessária volta a executor e exige nova auditoria.
-- Auditoria independente do diff agregado é obrigatória. O auditor é outro agente, não participa da implementação e trabalha somente em leitura depois que todos os executores pararem. Ele devolve `APROVADA` ou `REPROVADA` com achados `arquivo:linha`. Achado bloqueante exige correção delegada e nova auditoria.
-- Só concluir quando a auditoria aprovar, as validações finais forem relatadas e o coordenador registrar o checkpoint. O auditor não corrige arquivos.
-- Se a sessão não disponibilizar subagentes, informe a limitação e pare antes de implementar em modo de agente único.
-- Agentes do harness: Claude Code usa `.claude/agents/executor.md` e `.claude/agents/revisor.md`; Codex usa `.codex/agents/harness_executor.toml` e `.codex/agents/harness_auditor.toml`. `auditor-pilares` segue específico da skill `pilares`.
-- Subagente não escreve em `docs/ai/`; os registros e handoffs pertencem ao coordenador.
-- Executor e auditor não fazem commit, push, merge, release, deploy ou ação destrutiva. Gates de autorização existentes continuam válidos.
-- Faça uma auditoria do diff agregado por atividade e repita somente quando houver correções. Subagentes consomem chamadas adicionais de modelo e ferramentas: limitar concorrência reduz o pico, mas não garante custo igual ou menor. Não mantenha agente ativo sem tarefa independente.
-- Perfis CLI podem cruzar Claude Code e Codex ao iniciar os respectivos executáveis headless. Cada provedor usa sua conta e suas cotas; o limite de chamadas não é um teto de dinheiro. Prefira o modo nativo quando não precisar cruzar provedores.
-- Subtarefas de uma atividade compartilham uma única frente e quadro de tarefas; não crie uma frente por executor. Frentes de produto distintas permanecem separadas em branches/worktrees para proteger a posse e evitar concorrência de arquivos.
+- O protocolo usa **chefe > supervisores > construtores**. O chefe coordena specs/frentes e audita o diff agregado; há um supervisor por frente/spec; construtores recebem subtarefas com arquivos, dependências e critérios. Não há um quarto agente auditor. O chefe não roda testes.
+- O manifesto hierárquico segue `.init-harness/schema/iniciativa.schema.json`. Cada frente declara equipe, especialidade (`frontend`, `backend`, `security`, `deploy_cicd` ou `database`), repositório, branch, commit-base, spec, dependências e escopo. Execute com `python .claude/skills/orquestrar/scripts/invocar_agentes.py --iniciativa <manifesto.json>`.
+- Supervisores especialistas planejam as frentes e recebem os planos das outras frentes para registrar acordos, conflitos e perguntas antes da escrita. Pares de construtores podem fazer uma rodada consultiva; o supervisor fecha o plano e encaminha contexto específico a cada construtor.
+- Cada construtor trabalha em worktree temporário. O runner rejeita arquivos fora do escopo, verifica se o repositório principal mudou e integra somente os arquivos autorizados. Arquivos atribuídos que já estavam alterados bloqueiam o despacho.
+- Construtores executam e relatam as verificações solicitadas. Supervisores auditam suas specs. O chefe confere os diffs e relatórios sem rodar testes e pode aprovar, pedir esclarecimento ou solicitar revisão direcionada via `--decisao-chefe`.
+- Perguntas humanas são registradas no estado local. Responda todas no arquivo JSON do schema `.init-harness/schema/respostas.schema.json` e retome com `python .claude/skills/orquestrar/scripts/invocar_agentes.py --iniciativa <manifesto.json> --respostas <respostas.json>`. O runner reexecuta apenas a etapa bloqueada e preserva os resultados concluídos. Mantenha o manifesto idêntico durante a retomada.
+- O estado operacional fica em `.init-harness/state/orquestracao/<initiative_id>/`. Registra planos, relatórios e decisões humanas necessárias à retomada; não grava prompts nem respostas completas dos agentes. Git permanece a fonte de verdade das alterações.
+- O runner hierárquico requer os papéis em modo `cli`; perfis legados `coordenador`, `auditor` e `executor` servem como fallback para chefe, supervisor e construtor. `--lote` continua aceitando o protocolo legado. Limites do manifesto controlam volume e concorrência, não custo monetário.
+- Uma execução pode coordenar várias frentes e repositórios locais. O estado ainda não sincroniza entre máquinas; equipes distribuídas precisam de branches/worktrees separadas e integração Git sequencial.
+- Agentes não fazem commit, push, merge, release, deploy ou ação destrutiva. Subagentes não escrevem em `docs/ai/`; o chefe mantém esses registros e a auditoria final.
 
 ---
-
 ## 13. Grafo (Graphify)
 
 Pacote PyPI `graphifyy` (dois "y"), comando `graphify`, Python ≥ 3.10 (o `uv` provê a versão, se faltar). Referência: https://graphify.com/docs/cli. Na dúvida sobre um comando, `graphify --help`. Não supor flags.

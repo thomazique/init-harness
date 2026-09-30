@@ -573,6 +573,10 @@ def consolidation_proposal(root: Path, branch: str) -> list[str]:
     if not items:
         return [f"Consolidação proposta para {front}: nenhum arquivo de código alterado."]
     code_files = sorted(path for path in L.arquivos_alterados(root) if L.e_codigo(path))
+    declared = set(_front_surface_files(root, front, current[1]))
+    code_files = [path for path in code_files if path in declared] + [
+        path for path in code_files if path not in declared
+    ]
     lines = [f"Consolidação proposta para {front}: nenhum arquivo foi alterado automaticamente."]
     lines.append(
         "Código alterado no Git: " + ", ".join(code_files[:20]) + (" e outros." if len(code_files) > 20 else ".")

@@ -1,5 +1,20 @@
 # Changelog
 
+## 5.0.0 — supervisores especialistas e orquestração revisável
+
+### Adicionado
+
+- Especialidades obrigatórias por frente: frontend, backend, segurança, deploy/CI/CD e banco de dados, com presets próprios; frontend reutiliza a skill existente.
+- Contexto técnico específico por tarefa, preparado pelo supervisor para limitar o escopo recebido por cada construtor.
+- Decisão final do chefe via `--decisao-chefe`: aprovação, pergunta humana ou revisão direcionada com reexecução das tarefas afetadas e dependências.
+- Schemas do manifesto, retomada humana e decisão final passam a ser distribuídos pelo instalador.
+
+### Corrigido
+
+- Dependências entre frentes agora aguardam a conclusão de todas as tarefas da frente dependente.
+- Instalação no modo cliente inclui a skill de orquestração na lista de conteúdo metodológico.
+- A proposta de consolidação prioriza arquivos declarados pela frente ao resumir alterações extensas.
+
 ## 4.0.0 — orquestração multiagente padrão
 
 ### Alterado

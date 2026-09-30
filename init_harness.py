@@ -15,7 +15,7 @@ from typing import Any
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-VERSION = "4.0.0"
+VERSION = "5.0.0"
 
 MANAGED_FILES = (
     "INIT-HARNESS.md",
@@ -43,6 +43,9 @@ MANAGED_FILES = (
     ".githooks/pre_commit.py",
     ".init-harness/schema/config.schema.json",
     ".init-harness/schema/orquestracao.schema.json",
+    ".init-harness/schema/iniciativa.schema.json",
+    ".init-harness/schema/respostas.schema.json",
+    ".init-harness/schema/decisao-chefe.schema.json",
     "tests/guardrails/__init__.py",
     "tests/guardrails/test_guardrails.py",
 )

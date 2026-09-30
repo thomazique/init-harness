@@ -1,4 +1,4 @@
-# init-harness 4.0.0
+# init-harness 5.0.0
 
 `init-harness` instala e atualiza uma base operacional para trabalhar com agentes de IA em
 repositórios Git. Mantém protocolo e contexto do projeto em arquivos versionáveis, registra
@@ -6,10 +6,7 @@ o andamento entre sessões, conecta memória local e grafo de código, e adicion
 guardrails ao fluxo de trabalho. O harness serve a projetos diferentes: preserva os arquivos
 do projeto e adapta suas instruções ao código e às ferramentas existentes.
 
-A versão **4.0.0** muda o protocolo padrão para trabalho multiagente: o agente principal coordena,
-divide a atividade entre executores com escopos explícitos e solicita auditoria independente do
-diff agregado. O fluxo tem adaptadores nativos para Claude Code e Codex, protege alterações
-preexistentes e encaminha achados do auditor de volta aos executores.
+A versão **5.0.0** acrescenta especialidades por frente, presets para supervisores e contexto direcionado por tarefa para construtores. Mantém o fluxo **chefe > supervisores > construtores**, com auditoria final do chefe sem executar testes e revisões direcionadas por tarefa.
 
 A versão **3.2.2** adicionou testes de contrato para o verificador da skill de frontend,
 cobrindo os modos consultivo e `--strict`, avisos, comentários, tokens e descoberta de arquivos.
@@ -33,10 +30,7 @@ padrões de produto. O analisador é consultivo por padrão e só falha quando o
   arquivos afetados. O modo manual permite instalar sem Graphify.
 - **Protocolos e guardrails:** adaptadores para Claude Code e Codex, skills operacionais,
   hooks e verificações Git para reduzir riscos no fluxo de edição.
-- **Orquestração multiagente:** agente principal coordena; executores recebem tarefas e arquivos
-  delimitados; um auditor independente revisa o diff agregado e aprova ou reprova antes da
-  conclusão. Perfis base por atividade permitem usar agentes nativos ou combinar Claude Code e
-  Codex por meio dos CLIs autenticados localmente.
+- **Orquestração multiagente:** o protocolo define chefe, supervisores por frente/spec e construtores por subtarefa, com alinhamento entre supervisores, escopo explícito e auditoria final pelo chefe.
 - **Aprendizado controlado de skills:** captura experiências locais, agrupa sugestões,
   mantém fila e propostas, avalia candidatas e exige decisão humana antes de promover uma
   skill ativa.
@@ -59,75 +53,29 @@ alguns padrões mecânicos em arquivos web e Dart; seus diagnósticos são heur�
 medida universal de qualidade. O modo bloqueante `--strict` só é indicado quando a equipe
 decidir que essas regras se aplicam à sua stack.
 
-## Destaque da versão 4.0: execução coordenada por agentes
+## Destaque da versão 4.0: orquestração hierárquica
 
-Em solicitações de implementação, o agente principal atua como coordenador e delega as mudanças
-a agentes executores. Cada subtarefa recebe objetivo, critérios de aceite, dependências e arquivos
-autorizados. O coordenador controla a ordem, preserva mudanças preexistentes, espera os executores
-e compara seus relatórios com os arquivos realmente alterados.
+O protocolo segue três níveis: **chefe > supervisores especialistas por frente > construtores por subtarefa**. Cada frente escolhe `frontend`, `backend`, `security`, `deploy_cicd` ou `database`. Supervisores planejam e reconciliam interfaces, distribuem contexto técnico específico por tarefa e auditam suas frentes. Construtores trabalham em worktrees temporários e recebem somente o escopo da tarefa. O chefe audita o diff agregado sem executar testes e pode aprovar, pedir esclarecimento ou despachar revisões direcionadas.
 
-Depois que as escritas terminam, um auditor separado e somente de leitura confere o diff completo
-contra o pedido e os critérios de aceite. Uma reprovação devolve os achados aos executores e exige
-uma nova auditoria. O coordenador controla a integração por delegação e só conclui com aprovação
-do auditor e validações relatadas.
+Crie um manifesto conforme `.init-harness/schema/iniciativa.schema.json` e execute:
 
-Claude Code usa `.claude/agents/executor.md` e `.claude/agents/revisor.md`. Codex usa
-`.codex/agents/harness_executor.toml` e `.codex/agents/harness_auditor.toml`. O protocolo comum
-está em `.claude/skills/orquestrar/SKILL.md` e em `INIT-HARNESS.md`. O coordenador mantém uma fila
-de tarefas com dependências e donos de arquivos, inicia tarefas independentes até o limite e
-preenche vagas quando um executor termina. A configuração inicial permite até três executores
-ativos. Tarefas que dependem umas das outras ou alteram os mesmos arquivos seguem em sequência;
-uma única auditoria confere o diff consolidado.
+```powershell
+python .claude/skills/orquestrar/scripts/invocar_agentes.py --iniciativa manifesto.json
+```
 
-As subtarefas de uma atividade ficam no quadro `Tarefas delegadas` de uma única frente. O quadro
-registra quem executa, dependências, arquivos e resultado. Não é necessário abrir uma frente por
-executor. Frentes de produto separadas continuam em branches e worktrees próprias para manter o
-isolamento já exigido pelo harness.
+Quando o estado devolver perguntas, grave as respostas exatas conforme `.init-harness/schema/respostas.schema.json` e retome:
+
+```powershell
+python .claude/skills/orquestrar/scripts/invocar_agentes.py --iniciativa manifesto.json --respostas respostas.json
+```
+
+O estado fica em `.init-harness/state/orquestracao/<initiative_id>/`. A retomada preserva etapas concluídas; o manifesto deve permanecer igual. Use `--decisao-chefe decisao.json` para registrar `{ "decision": "approve", "summary": "..." }`, `{ "decision": "revise", "findings": [{"front_id":"...","task_id":"...","instruction":"..."}] }` ou `{ "decision": "ask_human", "questions": ["..."] }`. Revisões invalidam as tarefas atingidas, dependências e auditorias relacionadas. O runtime aceita várias frentes/repos locais numa execução, mas não sincroniza estado entre máquinas. A hierarquia usa perfis CLI; `--lote` mantém compatibilidade com o formato legado executor/auditor. Os limites do manifesto regulam chamadas e concorrência, não custo monetário.
 
 ### Modelos, concorrência e custo
 
-`orquestracao.limite_executores` em `.init-harness/config.json` define o limite usado pelo
-protocolo. Para mudar o limite máximo efetivo, ajuste também
-`CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` em `.claude/settings.json` ou
-`agents.max_concurrent_threads_per_session` em `.codex/config.toml`, conforme o cliente. Os modelos
-são configuráveis nos perfis nativos: `model` nos arquivos `.claude/agents/*.md`; `model` e
-`model_reasoning_effort` em `.codex/agents/*.toml`.
+Perfis legados permanecem válidos: `coordenador`, `executor` e `auditor`. Os papéis `chefe`, `supervisor` e `construtor` são opcionais, com fallback para os papéis legados. Para o manifesto, os papéis efetivamente chamados precisam estar configurados em modo `cli`; os executáveis devem estar instalados e autenticados.
 
-No início de cada atividade, o coordenador pergunta qual perfil usar em
-`.init-harness/orquestracao.json` e registra a escolha na frente daquela atividade. Tarefas
-simultâneas podem escolher perfis diferentes sem sobrescrever uma configuração global. O arquivo
-define provedor e modelo para coordenador, executores e auditor e pode ser editado pelo projeto.
-
-Os perfis iniciais incluem `claude_opus_codex_luna` (Claude Opus coordena e audita; Codex GPT-6
-Luna executa) e `codex_luna_claude_opus` (Codex GPT-6 Luna coordena e executa; Claude Opus audita),
-além de opções nativas para cada cliente. Os perfis híbridos chamam os CLIs instalados localmente,
-que precisam estar autenticados na conta de cada provedor. Uma configuração só é usada quando
-escolhida para a atividade.
-Em perfis nativos do Codex, alinhe o modelo do arquivo com `model` em `.codex/agents/*.toml`; os
-perfis `cli` aplicam diretamente o modelo escolhido no arquivo de orquestração.
-
-O arquivo `.init-harness/state/orquestracao.sqlite3` guarda metadados das chamadas CLI, sem prompts
-ou respostas. O runner desativa a persistência local de sessões nos dois CLIs. `limite_chamadas_cli_por_atividade`
-limita quantas invocações externas são iniciadas; `--remover-lote` apaga o JSON temporário com as
-instruções depois que o runner o lê. Isso não altera a retenção ou o uso de dados pelo provedor.
-
-Os perfis iniciais usam Sonnet para execução e Opus para auditoria no Claude Code. No Codex, usam
-GPT-6 Luna com raciocínio `high` para execução e auditoria. O modelo do coordenador é o selecionado
-na sessão. Escolha modelos disponíveis na conta e no cliente em uso.
-
-O coordenador abre só executores com tarefas independentes e contexto delimitado, e o auditor revisa
-o diff consolidado uma vez. Subagentes geram chamadas extras e podem elevar o consumo. O limite de
-concorrência controla quantos rodam ao mesmo tempo; ele não estabelece um teto de custo nem garante
-que a conta final não aumente. Os controles financeiros dependem do plano e do provedor.
-
-Os perfis híbridos usam as contas, cotas e políticas de dados dos provedores selecionados. O limite
-de concorrência reduz o pico de chamadas e o limite por atividade controla o número de processos
-CLI; nenhum deles define um teto monetário ou garante que o custo final não aumente.
-
-O fluxo depende das ferramentas de subagentes disponíveis no cliente e na sessão ativa. As
-instruções e os perfis configuram os papéis; eles não substituem permissões, sandbox, revisão de
-código ou os gates de commit e deploy do projeto.
-
+`max_parallel`, `max_agents`, `max_calls` e `max_builders_per_supervisor` limitam o volume da iniciativa. Chamadas usam contas e cotas dos provedores selecionados; esses limites não estabelecem teto monetário. O estado JSON e as decisões humanas ficam locais; prompts e respostas completas dos agentes não são persistidos.
 > Estado: projeto em evolução. O harness ajuda a estruturar trabalho com IA,
 > mas não substitui revisão humana, sandbox, CI, backups ou controles de acesso.
 

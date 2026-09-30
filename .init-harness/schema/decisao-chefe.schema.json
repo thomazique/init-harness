@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/thomazique/init-harness/blob/main/.init-harness/schema/decisao-chefe.schema.json",
+  "title": "init-harness chief audit decision",
+  "$ref": "./orquestracao.schema.json#/$defs/decisao_chefe"
+}

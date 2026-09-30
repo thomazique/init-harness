@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/thomazique/init-harness/blob/main/.init-harness/schema/respostas.schema.json",
+  "title": "init-harness human decisions for a paused initiative",
+  "$ref": "./orquestracao.schema.json#/$defs/respostas_humanas"
+}
