@@ -9,6 +9,10 @@ O protocolo organiza o trabalho em três níveis: **chefe > supervisores > const
 
 ## Configuração e compatibilidade
 
+Escolha o perfil antes de planejar a iniciativa. A separação padrão é deliberada: o chefe usa o modelo de maior capacidade; o supervisor, um modelo intermediário; e os construtores, um modelo mais eficiente. Para Claude + OpenAI, o perfil recomendado é Claude Opus (`opus`) no chefe, Claude Sonnet (`sonnet`) nos supervisores e GPT-5.6 Luna nos construtores. Há também perfis exclusivos de cada provedor. Os aliases `opus`, `sonnet` e `haiku` selecionam as versões disponibilizadas pelo Claude Code; modelos e esforço de raciocínio podem ser ajustados localmente.
+
+O campo `chefe` documenta o modelo esperado para a sessão principal. O runner não troca o modelo dessa sessão: antes de prosseguir, confirme que a sessão atual corresponde ao chefe do perfil escolhido. Se não corresponder ou não for possível confirmar, ajuste o perfil ou esclareça a escolha com o humano. O runner usa `supervisor` e `construtor` para despachar as chamadas CLI.
+
 Leia `.init-harness/orquestracao.json`, `.init-harness/config.json`, as instruções aplicáveis, as specs das frentes e o estado do Git. A configuração de perfis mantém os campos legados `coordenador`, `executor` e `auditor`; os papéis `chefe`, `supervisor` e `construtor` são opcionais. Na ausência deles, use respectivamente coordenador, auditor e executor. A escolha de perfil vale para a iniciativa corrente e não deve ser gravada como estado global compartilhado.
 
 Uma iniciativa hierárquica usa o contrato versão 1, descrito como `$defs.manifesto_iniciativa` em `.init-harness/schema/orquestracao.schema.json`:

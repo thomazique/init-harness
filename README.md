@@ -1,4 +1,4 @@
-# init-harness 5.0.0
+# init-harness 5.0.1
 
 `init-harness` instala e atualiza uma base operacional para trabalhar com agentes de IA em
 repositórios Git. Mantém protocolo e contexto do projeto em arquivos versionáveis, registra
@@ -6,7 +6,7 @@ o andamento entre sessões, conecta memória local e grafo de código, e adicion
 guardrails ao fluxo de trabalho. O harness serve a projetos diferentes: preserva os arquivos
 do projeto e adapta suas instruções ao código e às ferramentas existentes.
 
-A versão **5.0.0** acrescenta especialidades por frente, presets para supervisores e contexto direcionado por tarefa para construtores. Mantém o fluxo **chefe > supervisores > construtores**, com auditoria final do chefe sem executar testes e revisões direcionadas por tarefa.
+A versão **5.0.1** separa os modelos por nível da orquestração e inclui perfis de Claude, OpenAI e uso combinado, filtrados pelos provedores selecionados na instalação. A versão **5.0.0** acrescentou especialidades por frente, presets para supervisores e contexto direcionado por tarefa para construtores. O fluxo permanece **chefe > supervisores > construtores**, com auditoria final do chefe sem executar testes e revisões direcionadas por tarefa.
 
 A versão **3.2.2** adicionou testes de contrato para o verificador da skill de frontend,
 cobrindo os modos consultivo e `--strict`, avisos, comentários, tokens e descoberta de arquivos.

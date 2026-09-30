@@ -5,36 +5,34 @@
   "timeout_segundos": 1800,
   "perfis": [
     {
-      "id": "claude_opus_codex_luna",
-      "descricao": "Claude Opus coordena e audita; Codex GPT-6 Luna executa.",
+      "id": "claude_opus_sonnet_codex_luna",
+      "descricao": "Perfil recomendado com os dois provedores: Claude Opus como chefe, Sonnet como supervisor e Codex GPT-5.6 Luna como construtor.",
+      "chefe": {"provedor": "claude", "modelo": "opus", "modo": "sessao"},
       "coordenador": {"provedor": "claude", "modelo": "opus", "modo": "sessao"},
-      "executor": {"provedor": "codex", "modelo": "gpt-6-luna", "raciocinio": "high", "modo": "cli"},
-      "auditor": {"provedor": "claude", "modelo": "opus", "modo": "cli"},
-      "supervisor": {"provedor": "claude", "modelo": "opus", "modo": "cli"},
-      "construtor": {"provedor": "codex", "modelo": "gpt-6-luna", "raciocinio": "high", "modo": "cli"}
+      "supervisor": {"provedor": "claude", "modelo": "sonnet", "modo": "cli"},
+      "auditor": {"provedor": "claude", "modelo": "sonnet", "modo": "cli"},
+      "construtor": {"provedor": "codex", "modelo": "gpt-5.6-luna", "raciocinio": "high", "modo": "cli"},
+      "executor": {"provedor": "codex", "modelo": "gpt-5.6-luna", "raciocinio": "high", "modo": "cli"}
     },
     {
-      "id": "codex_luna_claude_opus",
-      "descricao": "Codex GPT-6 Luna coordena e executa; Claude Opus audita.",
-      "coordenador": {"provedor": "codex", "modelo": "gpt-6-luna", "modo": "sessao"},
-      "executor": {"provedor": "codex", "modelo": "gpt-6-luna", "raciocinio": "high", "modo": "cli"},
-      "auditor": {"provedor": "claude", "modelo": "opus", "modo": "cli"},
-      "supervisor": {"provedor": "claude", "modelo": "opus", "modo": "cli"},
-      "construtor": {"provedor": "codex", "modelo": "gpt-6-luna", "raciocinio": "high", "modo": "cli"}
+      "id": "codex_sol_terra_luna",
+      "descricao": "Perfil OpenAI: GPT-6 Sol como chefe, GPT-5.6 Terra como supervisor e GPT-5.6 Luna como construtor.",
+      "chefe": {"provedor": "codex", "modelo": "gpt-6-sol", "raciocinio": "medium", "modo": "sessao"},
+      "coordenador": {"provedor": "codex", "modelo": "gpt-6-sol", "raciocinio": "medium", "modo": "sessao"},
+      "supervisor": {"provedor": "codex", "modelo": "gpt-5.6-terra", "raciocinio": "medium", "modo": "cli"},
+      "auditor": {"provedor": "codex", "modelo": "gpt-5.6-terra", "raciocinio": "medium", "modo": "cli"},
+      "construtor": {"provedor": "codex", "modelo": "gpt-5.6-luna", "raciocinio": "high", "modo": "cli"},
+      "executor": {"provedor": "codex", "modelo": "gpt-5.6-luna", "raciocinio": "high", "modo": "cli"}
     },
     {
-      "id": "claude_nativo",
-      "descricao": "Claude coordena, executa e audita usando os perfis nativos do Claude Code.",
-      "coordenador": {"provedor": "claude", "modelo": "sessao", "modo": "sessao"},
-      "executor": {"provedor": "claude", "modelo": "sonnet", "modo": "nativo"},
-      "auditor": {"provedor": "claude", "modelo": "opus", "modo": "nativo"}
-    },
-    {
-      "id": "codex_nativo",
-      "descricao": "Codex coordena, executa e audita usando os perfis nativos do Codex.",
-      "coordenador": {"provedor": "codex", "modelo": "sessao", "modo": "sessao"},
-      "executor": {"provedor": "codex", "modelo": "gpt-6-luna", "modo": "nativo"},
-      "auditor": {"provedor": "codex", "modelo": "gpt-6-luna", "modo": "nativo"}
+      "id": "claude_opus_sonnet_haiku",
+      "descricao": "Perfil Claude: Opus como chefe, Sonnet como supervisor e Haiku como construtor de menor custo.",
+      "chefe": {"provedor": "claude", "modelo": "opus", "modo": "sessao"},
+      "coordenador": {"provedor": "claude", "modelo": "opus", "modo": "sessao"},
+      "supervisor": {"provedor": "claude", "modelo": "sonnet", "modo": "cli"},
+      "auditor": {"provedor": "claude", "modelo": "sonnet", "modo": "cli"},
+      "construtor": {"provedor": "claude", "modelo": "haiku", "modo": "cli"},
+      "executor": {"provedor": "claude", "modelo": "haiku", "modo": "cli"}
     }
   ]
 }

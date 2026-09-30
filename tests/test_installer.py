@@ -91,6 +91,40 @@ class InstallerTest(unittest.TestCase):
                 self.assertEqual(0, init_harness.main(args, KIT))
             self.assertIn("Resultado: 0 mudança(s)", output.getvalue())
 
+    def test_perfis_iniciais_sao_filtrados_pelos_provedores_selecionados(self) -> None:
+        expected = {
+            ("claude",): {"claude_opus_sonnet_haiku"},
+            ("codex",): {"codex_sol_terra_luna"},
+            ("claude", "codex"): {
+                "claude_opus_sonnet_codex_luna",
+                "codex_sol_terra_luna",
+                "claude_opus_sonnet_haiku",
+            },
+        }
+        for selected, profile_ids in expected.items():
+            with self.subTest(providers=selected), tempfile.TemporaryDirectory() as tmp:
+                target = Path(tmp)
+                reporter = init_harness.Reporter()
+                init_harness.install_orchestration_config(KIT, target, list(selected), reporter)
+                config = json.loads((target / ".init-harness/orquestracao.json").read_text(encoding="utf-8"))
+                self.assertEqual(profile_ids, {profile["id"] for profile in config["perfis"]})
+                for profile in config["perfis"]:
+                    for role in ("chefe", "supervisor", "construtor"):
+                        self.assertIn(profile[role]["provedor"], selected)
+
+    def test_perfis_iniciais_reduzem_o_modelo_conforme_desce_a_hierarquia(self) -> None:
+        template = json.loads(
+            (KIT / ".claude/skills/orquestrar/templates/orquestracao.template.json").read_text(encoding="utf-8")
+        )
+        hybrid = next(profile for profile in template["perfis"] if profile["id"] == "claude_opus_sonnet_codex_luna")
+        self.assertEqual("opus", hybrid["chefe"]["modelo"])
+        self.assertEqual("sonnet", hybrid["supervisor"]["modelo"])
+        self.assertEqual("gpt-5.6-luna", hybrid["construtor"]["modelo"])
+        self.assertEqual("high", hybrid["construtor"]["raciocinio"])
+        self.assertEqual(
+            "codex_sol_terra_luna", next(p["id"] for p in template["perfis"] if p["chefe"]["modelo"] == "gpt-6-sol")
+        )
+
     def _install_and_doctor(self, target: Path, mutate) -> subprocess.CompletedProcess[str]:
         git_init(target)
         self.assertEqual(

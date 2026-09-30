@@ -1,5 +1,17 @@
 # Changelog
 
+## 5.0.1 — perfis de agentes por nível e provedor
+
+### Adicionado
+
+- Perfis iniciais separam chefe, supervisor e construtor por capacidade/custo: Opus/Sonnet/Luna no uso combinado, Sol/Terra/Luna no Codex e Opus/Sonnet/Haiku no Claude.
+- Instalador filtra perfis conforme os provedores selecionados em `--providers`, sem substituir a configuração de orquestração já existente no projeto.
+- Documentada a limitação do chefe: seu perfil descreve a sessão interativa esperada; o runner despacha apenas supervisores e construtores por CLI.
+
+### Corrigido
+
+- O supervisor deixa de usar o mesmo modelo de maior capacidade configurado para o chefe nos perfis iniciais.
+
 ## 5.0.0 — supervisores especialistas e orquestração revisável
 
 ### Adicionado

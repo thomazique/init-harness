@@ -15,7 +15,7 @@ from typing import Any
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-VERSION = "5.0.0"
+VERSION = "5.0.1"
 
 MANAGED_FILES = (
     "INIT-HARNESS.md",
@@ -335,7 +335,7 @@ def install_config(
     return data
 
 
-def install_orchestration_config(source: Path, target: Path, reporter: Reporter) -> None:
+def install_orchestration_config(source: Path, target: Path, providers: list[str], reporter: Reporter) -> None:
     """Cria os perfis iniciais sem substituir escolhas locais em instalações existentes."""
     destination = target / ".init-harness/orquestracao.json"
     if destination.exists():
@@ -344,7 +344,19 @@ def install_orchestration_config(source: Path, target: Path, reporter: Reporter)
     template = source / ".claude/skills/orquestrar/templates/orquestracao.template.json"
     data = load_json(template)
     data["$schema"] = "./schema/orquestracao.schema.json"
-    reporter.change("criar .init-harness/orquestracao.json com perfis iniciais de agentes")
+    disponiveis = set(providers)
+    data["perfis"] = [
+        perfil
+        for perfil in data["perfis"]
+        if all(
+            agente.get("provedor") in disponiveis
+            for agente in perfil.values()
+            if isinstance(agente, dict) and "provedor" in agente
+        )
+    ]
+    if not data["perfis"]:
+        raise ValueError("nenhum perfil de orquestração compatível com os provedores selecionados")
+    reporter.change(".init-harness/orquestracao.json com perfis compatíveis com: " + ", ".join(sorted(disponiveis)))
     if not reporter.dry_run:
         write_json(destination, data)
 
@@ -565,7 +577,7 @@ def run_install(args: argparse.Namespace, source: Path) -> int:
     migrate_multiagent_adapter(target, providers, reporter)
     install_settings(source, target, providers, reporter)
     install_config(source, target, args.mode, providers, args.graph, args.memory_mcp, args.bootstrap, reporter)
-    install_orchestration_config(source, target, reporter)
+    install_orchestration_config(source, target, providers, reporter)
     append_lines(
         target / ".gitignore",
         [
