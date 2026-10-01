@@ -15,7 +15,7 @@ from typing import Any
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-VERSION = "5.0.1"
+VERSION = "5.0.2"
 
 MANAGED_FILES = (
     "INIT-HARNESS.md",
@@ -25,6 +25,7 @@ MANAGED_FILES = (
     ".claude/hooks/guard_bash.py",
     ".claude/hooks/guard_files.py",
     ".claude/hooks/memory.py",
+    ".claude/hooks/jev.py",
     ".claude/hooks/memory_mcp.py",
     ".claude/hooks/skill_evolution.py",
     ".claude/hooks/skill_observe.py",
@@ -60,6 +61,7 @@ MANAGED_TREES = (
     ".claude/skills/orquestrar",
 )
 PROJECT_TEMPLATES = {
+    ".env.example": ".claude/skills/init-harness/templates/jev.env.example",
     "CLAUDE.md": ".claude/skills/init-harness/templates/CLAUDE.template.md",
     "AGENTS.md": ".claude/skills/init-harness/templates/AGENTS.template.md",
     "docs/ai/ESTADO.md": ".claude/skills/init-harness/templates/ESTADO.template.md",
@@ -287,7 +289,7 @@ def migrate_multiagent_adapter(target: Path, providers: list[str], reporter: Rep
 
 
 def config_data(
-    source: Path, mode: str, providers: list[str], graph: str, memory_mcp: bool, bootstrap: bool
+    source: Path, mode: str, providers: list[str], graph: str, memory_mcp: bool, jev_enabled: bool, bootstrap: bool
 ) -> dict[str, Any]:
     data = load_json(source / ".claude/skills/init-harness/templates/config.template.json")
     data["instalado_em"] = date.today().isoformat()
@@ -295,6 +297,7 @@ def config_data(
     data["providers"] = providers
     data["grafo"] = graph
     data["memoria"]["mcp"] = memory_mcp
+    data["jev"]["enabled"] = jev_enabled
     data["bootstrap"]["opt_in"] = bootstrap
     return data
 
@@ -306,6 +309,7 @@ def install_config(
     providers: list[str],
     graph: str,
     memory_mcp: bool,
+    jev_enabled: bool,
     bootstrap: bool,
     reporter: Reporter,
 ) -> dict[str, Any]:
@@ -316,9 +320,12 @@ def install_config(
         data["harness_version"] = VERSION
         data["$schema"] = "./schema/config.schema.json"
         data.setdefault("providers", providers)
-        defaults = config_data(source, mode, providers, graph, memory_mcp, bootstrap)
+        defaults = config_data(source, mode, providers, graph, memory_mcp, jev_enabled, bootstrap)
         data.setdefault("autonomia", defaults["autonomia"])
         data.setdefault("memoria", defaults["memoria"])
+        data.setdefault("jev", defaults["jev"])
+        if jev_enabled:
+            data["jev"]["enabled"] = True
         data.setdefault("bootstrap", defaults["bootstrap"])
         data.setdefault("orquestracao", defaults["orquestracao"])
         if bootstrap:
@@ -328,7 +335,7 @@ def install_config(
             if not reporter.dry_run:
                 write_json(destination, data)
     else:
-        data = config_data(source, mode, providers, graph, memory_mcp, bootstrap)
+        data = config_data(source, mode, providers, graph, memory_mcp, jev_enabled, bootstrap)
         reporter.change("criar .init-harness/config.json")
         if not reporter.dry_run:
             write_json(destination, data)
@@ -576,7 +583,9 @@ def run_install(args: argparse.Namespace, source: Path) -> int:
     create_project_files(source, target, providers, reporter)
     migrate_multiagent_adapter(target, providers, reporter)
     install_settings(source, target, providers, reporter)
-    install_config(source, target, args.mode, providers, args.graph, args.memory_mcp, args.bootstrap, reporter)
+    install_config(
+        source, target, args.mode, providers, args.graph, args.memory_mcp, args.jev, args.bootstrap, reporter
+    )
     install_orchestration_config(source, target, providers, reporter)
     append_lines(
         target / ".gitignore",
@@ -586,6 +595,9 @@ def run_install(args: argparse.Namespace, source: Path) -> int:
             ".init-harness/memory/",
             ".init-harness/managed-baselines/",
             ".init-harness/updates/",
+            ".env",
+            ".env.*",
+            "!.env.example",
         ],
         reporter,
     )
@@ -611,6 +623,7 @@ def run_upgrade(args: argparse.Namespace, source: Path) -> int:
     args.providers = data.get("providers", ["claude", "codex"])
     args.graph = data.get("grafo", "graphify")
     args.memory_mcp = bool((data.get("memoria") or {}).get("mcp", False))
+    args.jev = bool((data.get("jev") or {}).get("enabled", False))
     args.bootstrap = bool((data.get("bootstrap") or {}).get("opt_in", False))
     args.init_git = False
     return run_install(args, source)
@@ -635,6 +648,11 @@ def parser() -> argparse.ArgumentParser:
     install.add_argument("--providers", nargs="+", choices=("claude", "codex"), default=["claude", "codex"])
     install.add_argument("--graph", choices=("graphify", "manual"), default="graphify")
     install.add_argument("--memory-mcp", action="store_true", help="Marca a integração MCP de memória como opt-in.")
+    install.add_argument(
+        "--jev",
+        action="store_true",
+        help="Ativa Jev opcional para contexto e decisões do orquestrador (requer JEVMODEL_API_KEY).",
+    )
     install.add_argument(
         "--bootstrap",
         action="store_true",

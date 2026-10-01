@@ -7,6 +7,7 @@ Diagnóstico portátil da instalação do harness. Não altera arquivos.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -73,6 +74,13 @@ def main() -> int:
         memoria = h.get("memoria")
         if not isinstance(memoria, dict) or not isinstance(memoria.get("mcp"), bool):
             erros.append("bloco memoria.mcp ausente ou inválido")
+        jev = h.get("jev")
+        if not isinstance(jev, dict) or not isinstance(jev.get("enabled"), bool):
+            erros.append("bloco jev.enabled ausente ou inválido")
+        elif jev["enabled"]:
+            ok.append("Jev habilitado por opt-in (busca e triagem do orquestrador)")
+            if not os.environ.get("JEVMODEL_API_KEY") and not L.ler_dotenv(raiz / ".env").get("JEVMODEL_API_KEY"):
+                avisos.append("Jev habilitado, mas JEVMODEL_API_KEY não foi encontrada; busca usará FTS5")
 
     nucleo = raiz / "INIT-HARNESS.md"
     if not nucleo.exists():

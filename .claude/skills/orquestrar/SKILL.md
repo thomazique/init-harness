@@ -15,6 +15,18 @@ O campo `chefe` documenta o modelo esperado para a sessão principal. O runner n
 
 Leia `.init-harness/orquestracao.json`, `.init-harness/config.json`, as instruções aplicáveis, as specs das frentes e o estado do Git. A configuração de perfis mantém os campos legados `coordenador`, `executor` e `auditor`; os papéis `chefe`, `supervisor` e `construtor` são opcionais. Na ausência deles, use respectivamente coordenador, auditor e executor. A escolha de perfil vale para a iniciativa corrente e não deve ser gravada como estado global compartilhado.
 
+## Apoio opcional do Jev
+
+Quando `.init-harness/config.json` declara `jev.enabled: true`, use Jev como classificador auxiliar em pontos de decisão, nunca como agente conversacional:
+
+1. Depois de entender o pedido, o chefe prepara uma síntese curta em JSON com objetivo, restrições e resultado esperado — sem copiar a conversa inteira, segredos ou conteúdo irrelevante. Salva temporariamente em `.init-harness/state/jev-input.json`, chama `python .claude/hooks/memory.py jev-route --state-file .init-harness/state/jev-input.json` e remove o arquivo temporário. A saída tipada sugere intenção (`research`, `plan`, `implement_single`, `implement_parallel`, `review`, `maintenance`), especialidade predominante, risco e probabilidade de ambiguidade.
+2. O chefe compara esses rótulos com o pedido original, instruções, specs e evidências locais. Ele escolhe perfil, abre ou não frentes, define supervisores e escreve o manifesto. Jev não cria subtarefas, não despacha agentes e não envia instruções diretamente a supervisores ou construtores.
+3. Após planejamento/reconciliação ou auditoria de uma fase, o chefe pode resumir relatórios e evidências em JSON e chamar `python .claude/hooks/memory.py jev-gate --phase <fase> --state-file <arquivo>`; `<fase>` aceita `planejamento`, `reconciliacao`, `execucao` ou `auditoria`. O rótulo `continue`, `targeted_review` ou `ask_human` é uma recomendação para o chefe validar. A auditoria final continua sendo do chefe e perguntas humanas continuam subindo ao humano.
+
+Use chamadas apenas quando uma decisão puder mudar o plano ou o próximo passo; não chame Jev para cada mensagem ou atualização rotineira. Se Jev estiver desativado, sem chave, inconclusivo ou indisponível, siga exatamente o fluxo normal de raciocínio e FTS5. A síntese e os relatórios enviados ao classificador são dados do projeto enviados ao serviço externo; o opt-in deve ser explícito. Não envie segredos. A busca de contexto, quando Jev está habilitado, usa FTS5 para selecionar trechos e Jev para pontuá-los antes de devolvê-los ao chefe.
+
+Interprete `needs_clarification_probability >= 0.60` como sinal para conferir a ambiguidade no pedido original; `risk_score >= 4` exige aplicar as regras de segurança/autonomia do projeto. `confidence < 0.60` ou `status` diferente de `Jev` invalida o resultado para roteamento e mantém o julgamento normal do chefe. `implement_parallel` e `specialty: mixed` apenas sugerem decomposição: confirme que as frentes são independentes, atribua arquivos e reconcilie interfaces antes de despachar. O classificador não seleciona modelos; use os perfis configurados em `.init-harness/orquestracao.json`.
+
 Uma iniciativa hierárquica usa o contrato versão 1, descrito como `$defs.manifesto_iniciativa` em `.init-harness/schema/orquestracao.schema.json`:
 
 ```json

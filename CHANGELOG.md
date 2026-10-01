@@ -1,5 +1,19 @@
 # Changelog
 
+## 5.0.2 — Jev opcional para contexto e triagem de orquestração
+
+### Adicionado
+
+- Opt-in global `jev.enabled` na configuração do projeto e opção `--jev` no instalador; o padrão segue em FTS5/LLM local.
+- FTS5 reúne candidatos Markdown e Jev pontua até oito snippets em uma chamada; ausência de chave, baixa confiança, erro ou timeout mantém o ranking FTS5.
+- CLI de triagem permite ao orquestrador enviar um estado estruturado ao Jev antes do despacho e nos gates de fase; Jev devolve rótulos tipados, nunca texto livre nem tarefas executáveis.
+- `JEVMODEL_API_KEY` pode vir do ambiente ou de `.env` local; `.env.example` documenta a variável vazia e o instalador o cria apenas quando ainda não existe.
+- Pergunta de opt-in na implantação descreve quais dados vão ao serviço externo; candidatos com padrões locais de segredo são excluídos do payload.
+
+### Segurança
+
+- `.env` e variantes locais são ignorados pelo Git; chaves não aparecem em logs, documentação gerada nem estado operacional.
+
 ## 5.0.1 — perfis de agentes por nível e provedor
 
 ### Adicionado

@@ -117,6 +117,7 @@ Uma rodada, agrupada, objetiva:
 8. Limite de inatividade para uma frente poder ser assumida por outro agente.
 9. Políticas de negócio já conhecidas e quem autoriza mudá-las.
 10. Nível de rigor de spec, se diferente do padrão do harness.
+11. Deseja ativar o Jev opcional? Explique que, com opt-in e chave `JEVMODEL_API_KEY`, a consulta e até oito snippets de Markdown podem ser enviados para reordenar contexto; o orquestrador também envia sínteses curtas do pedido e relatórios de fase para receber rótulos de roteamento/gate. Sem opt-in, chave ou resposta útil, permanecem FTS5 e decisões normais do agente.
 
 ---
 
@@ -132,10 +133,11 @@ A partir dos templates em `.claude/skills/init-harness/templates/` (`CLAUDE.temp
 | `docs/ai/ESTRUTURA.md` | Módulos, fronteiras, fluxos e integrações do passo 3 confirmados no passo 6                                                                                              |
 | `docs/ai/DECISOES.md`  | Decisões da implantação: modo, tier, convenções escolhidas                                                                                                             |
 | `docs/ai/DEBITOS.md`   | Riscos visíveis do passo 5 e "auditoria de pilares pendente"                                                                                                               |
-| `.init-harness/config.json` | Versão, modo, data, grafo,`frente_inativa_horas`, regras de `ambientes`                                                                                                |
+| `.init-harness/config.json` | Versão, modo, data, grafo, `jev.enabled`, `frente_inativa_horas`, regras de `ambientes` |
 | `.init-harness/orquestracao.json` | Perfis selecionáveis de coordenador, executor e auditor para Claude Code/Codex |
 
 Nada genérico: campo sem informação confirmada mantém o marcador `PENDENTE` do template. Em `config.json`, sem confirmação, `frente_inativa_horas` fica `null` e `regras` fica vazio (tudo cai em `se_indeterminado: bloquear`).
+Jev fica desativado por padrão. Se a resposta da pergunta 11 for sim, marque `jev.enabled: true` em `config.json`; caso contrário, mantenha `false`. A chave deve vir de `JEVMODEL_API_KEY` no ambiente ou de `.env`, nunca do arquivo versionado `.env.example`.
 O instalador também cria `.init-harness/orquestracao.json` com perfis iniciais; não escolha um perfil global durante a implantação. O coordenador pergunta qual usar em cada atividade e registra a escolha na frente dela.
 
 ---

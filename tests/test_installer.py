@@ -70,7 +70,11 @@ class InstallerTest(unittest.TestCase):
             config = json.loads((target / ".init-harness/config.json").read_text(encoding="utf-8"))
             self.assertEqual(init_harness.VERSION, config["harness_version"])
             self.assertFalse(config["memoria"]["mcp"])
+            self.assertFalse(config["jev"]["enabled"])
             self.assertFalse(config["bootstrap"]["opt_in"])
+            self.assertTrue((target / ".env.example").is_file())
+            self.assertIn("JEVMODEL_API_KEY=", (target / ".env.example").read_text(encoding="utf-8"))
+            self.assertIn("!.env.example", (target / ".gitignore").read_text(encoding="utf-8"))
             self.assertEqual("continuar", config["autonomia"]["tarefas_seguras"])
             settings = json.loads((target / ".claude/settings.json").read_text(encoding="utf-8"))
             self.assertIn("Read(src/**)", settings["permissions"]["allow"])
@@ -440,6 +444,18 @@ class InstallerTest(unittest.TestCase):
             self.assertTrue(config["bootstrap"]["opt_in"])
             self.assertIn("Bootstrap opcional:", output.getvalue())
             self.assertIn("graphify-out/graph.json ausente", output.getvalue())
+
+    def test_jev_somente_com_opt_in(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "projeto"
+            target.mkdir()
+            self.assertEqual(
+                0,
+                init_harness.main(["install", "--target", str(target), "--graph", "manual", "--jev"], KIT),
+            )
+            config = json.loads((target / ".init-harness/config.json").read_text(encoding="utf-8"))
+            self.assertTrue(config["jev"]["enabled"])
+            self.assertIn("JEVMODEL_API_KEY=", (target / ".env.example").read_text(encoding="utf-8"))
 
     def test_memoria_indexa_contexto_e_handoff(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

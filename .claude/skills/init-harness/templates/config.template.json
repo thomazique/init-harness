@@ -1,11 +1,12 @@
 {
   "$schema": "./schema/config.schema.json",
-  "harness_version": "5.0.1",
+  "harness_version": "5.0.2",
   "modo": "proprio",
   "instalado_em": "AAAA-MM-DD",
   "providers": ["claude", "codex"],
   "grafo": "graphify",
   "memoria": {"mcp": false},
+  "jev": {"enabled": false},
   "bootstrap": {"opt_in": false},
   "frente_inativa_horas": null,
   "autonomia": {
