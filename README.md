@@ -15,7 +15,7 @@ auditoria da orquestração. Também traz a skill `investigar`, de depuração p
 raiz e de force-push na branch padrão, pilares de segurança para OWASP 2025, MCP, CI/CD e
 cadeia de suprimento de skills, e lint de roteamento das descriptions de skill no `doctor`.
 
-A versão **5.0.1** separa os modelos por nível da orquestração e inclui perfis de Claude, OpenAI e uso combinado, filtrados pelos provedores selecionados na instalação. A versão **5.0.0** acrescentou especialidades por frente, presets para supervisores e contexto direcionado por tarefa para construtores. O fluxo permanece **chefe > supervisores > construtores**, com auditoria final do chefe sem executar testes e revisões direcionadas por tarefa.
+A versão **5.0.2** adiciona Jev opcional para reordenar contexto recuperado pelo FTS5 e fornecer rótulos estruturados ao orquestrador antes do despacho e nos gates de fase, com fallback automático, controle explícito e chave fora do repositório. A versão **5.0.1** separa os modelos por nível da orquestração e inclui perfis de Claude, OpenAI e uso combinado, filtrados pelos provedores selecionados na instalação. A versão **5.0.0** acrescentou especialidades por frente, presets para supervisores e contexto direcionado por tarefa para construtores. O fluxo permanece **chefe > supervisores > construtores**, com auditoria final do chefe sem executar testes e revisões direcionadas por tarefa.
 
 A versão **3.2.2** adicionou testes de contrato para o verificador da skill de frontend,
 cobrindo os modos consultivo e `--strict`, avisos, comentários, tokens e descoberta de arquivos.

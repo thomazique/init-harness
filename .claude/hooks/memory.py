@@ -12,10 +12,12 @@ import json
 import re
 import sqlite3
 import sys
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
 import _lib as L
+import jev
 
 INDEX_RELATIVE = Path(".init-harness") / "memory" / "index.sqlite"
 WORK_GRAPH_RELATIVE = Path(".init-harness") / "memory" / "work-graph.json"
@@ -142,7 +144,7 @@ def index(root: Path) -> int:
     """Sincroniza incrementalmente o índice a partir do conteúdo canônico."""
     paths = _markdown_files(root)
     metadata = {path.relative_to(root).as_posix(): path.stat().st_mtime_ns for path in paths}
-    with _connect(root) as connection:
+    with closing(_connect(root)) as connection, connection:
         existing = dict(connection.execute("SELECT path, updated_at FROM pages"))
         deleted = set(existing) - set(metadata)
         changed = [
@@ -186,19 +188,27 @@ def _fts_terms(query: str) -> str:
     return " AND ".join(f'"{term.replace(chr(34), "")}"' for term in terms[:12])
 
 
-def search(root: Path, query: str, limit: int = 8) -> list[tuple[str, str, str]]:
+def search_with_status(root: Path, query: str, limit: int = 8) -> tuple[list[tuple[str, str, str]], str]:
     index(root)
     terms = _fts_terms(query)
     if not terms:
-        return []
-    with _connect(root) as connection:
+        return [], "FTS5 (consulta sem termos pesquisáveis)"
+    use_jev = jev.enabled(root) and bool(jev.api_key(root))
+    candidate_limit = min(30, max(limit, min(limit * 2, 16))) if use_jev else limit
+    with closing(_connect(root)) as connection, connection:
         rows = connection.execute(
             "SELECT pages.path, pages.kind, snippet(pages_fts, 2, '[', ']', '…', 18) "
             "FROM pages_fts JOIN pages ON pages.path = pages_fts.path "
             "WHERE pages_fts MATCH ? ORDER BY bm25(pages_fts) LIMIT ?",
-            (terms, max(1, min(limit, 30))),
+            (terms, max(1, min(candidate_limit, 30))),
         ).fetchall()
-    return [(str(path), str(kind), str(snippet).replace("\n", " ")) for path, kind, snippet in rows]
+    candidates = [(str(path), str(kind), str(snippet).replace("\n", " ")) for path, kind, snippet in rows]
+    ranked, search_status = jev.rerank(root, query, candidates)
+    return ranked[: max(1, min(limit, 30))], search_status
+
+
+def search(root: Path, query: str, limit: int = 8) -> list[tuple[str, str, str]]:
+    return search_with_status(root, query, limit)[0]
 
 
 def graph_freshness(root: Path) -> tuple[str, list[str]]:
@@ -275,7 +285,7 @@ def hybrid_recovery(root: Path, query: str, limit: int = 8) -> list[str]:
 
 
 def _open_handoffs(root: Path, branch: str) -> list[Path]:
-    with _connect(root) as connection:
+    with closing(_connect(root)) as connection, connection:
         rows = connection.execute(
             "SELECT path FROM handoffs WHERE status = 'aberto' AND branch IN (?, '*') ORDER BY created_at DESC",
             (branch,),
@@ -624,7 +634,7 @@ def briefing(root: Path, branch: str, limit: int = 4) -> list[str]:
         handoff_path = handoff.relative_to(root).as_posix()
         creator = frontmatter.get("criado_por", "?")
         lines.append(f"Handoff aberto: {handoff_path} — criado por {creator}. Próximo passo: {next_step}")
-    with _connect(root) as connection:
+    with closing(_connect(root)) as connection, connection:
         rows = connection.execute(
             "SELECT path, kind FROM pages WHERE kind IN ('frente', 'spec', 'decisao', 'debito', 'handoff') "
             "ORDER BY updated_at DESC LIMIT ?",
@@ -1309,7 +1319,7 @@ def list_handoffs(root: Path, branch: str | None = None) -> list[tuple[str, str,
         query += " WHERE branch IN (?, '*')"
         values = (branch,)
     query += " ORDER BY created_at DESC"
-    with _connect(root) as connection:
+    with closing(_connect(root)) as connection, connection:
         rows = connection.execute(query, values).fetchall()
     return [tuple(str(value or "") for value in row) for row in rows]
 
@@ -1355,7 +1365,7 @@ def accept_handoff(root: Path, raw_path: str, owner: str) -> Path:
     directory = (root / HANDOFFS_RELATIVE).resolve()
     relative = (HANDOFFS_RELATIVE / path.relative_to(directory)).as_posix()
     accepted_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    with _connect(root) as connection:
+    with closing(_connect(root)) as connection, connection:
         connection.execute("BEGIN IMMEDIATE")
         row = connection.execute("SELECT status FROM handoffs WHERE path = ?", (relative,)).fetchone()
         if row is None:
@@ -1385,8 +1395,23 @@ def _command(root: Path, args: argparse.Namespace) -> int:
         print(f"Índice reconstruído: {index(root)} página(s).")
         return 0
     if args.command == "query":
-        for path, kind, snippet in search(root, args.query, args.limit):
+        rows, search_status = search_with_status(root, args.query, args.limit)
+        print(f"Busca: {search_status}")
+        for path, kind, snippet in rows:
             print(f"{path} [{kind}]\n  {snippet}")
+        return 0
+    if args.command in {"jev-route", "jev-gate"}:
+        state_file = Path(args.state_file)
+        if not state_file.is_absolute():
+            state_file = root / state_file
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        if not isinstance(state, dict):
+            raise ValueError("o estado Jev precisa ser um objeto JSON")
+        if args.command == "jev-route":
+            decision, decision_status = jev.classify_task(root, state)
+        else:
+            decision, decision_status = jev.classify_gate(root, args.phase, state)
+        print(json.dumps({"status": decision_status, "decision": decision}, ensure_ascii=False))
         return 0
     if args.command == "retrieve":
         for line in hybrid_recovery(root, args.query, args.limit):
@@ -1500,6 +1525,13 @@ def parser() -> argparse.ArgumentParser:
     query = commands.add_parser("query", help="Pesquisa docs/ai, specs e handoffs.")
     query.add_argument("query")
     query.add_argument("--limit", type=int, default=8)
+    route = commands.add_parser("jev-route", help="Classifica uma síntese da solicitação para apoiar o chefe.")
+    route.add_argument(
+        "--state-file", required=True, help="JSON curto preparado pelo orquestrador; não inclua segredos."
+    )
+    gate = commands.add_parser("jev-gate", help="Classifica um relatório de fase para apoiar o gate do chefe.")
+    gate.add_argument("--phase", required=True, choices=("planejamento", "reconciliacao", "execucao", "auditoria"))
+    gate.add_argument("--state-file", required=True, help="JSON curto com o resumo e evidências da fase.")
     retrieve = commands.add_parser(
         "retrieve", help="Recupera contexto por FTS e correspondências confirmadas do Graphify."
     )

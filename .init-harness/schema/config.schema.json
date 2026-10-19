@@ -11,6 +11,7 @@
     "providers",
     "grafo",
     "memoria",
+    "jev",
     "bootstrap",
     "frente_inativa_horas",
     "autonomia",
@@ -34,6 +35,12 @@
       "additionalProperties": false,
       "required": ["mcp"],
       "properties": {"mcp": {"type": "boolean"}}
+    },
+    "jev": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled"],
+      "properties": {"enabled": {"type": "boolean"}}
     },
     "bootstrap": {
       "type": "object",

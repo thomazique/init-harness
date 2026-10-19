@@ -69,6 +69,8 @@
 - `modo`: `proprio` (tudo versionado, harness permanece) ou `cliente` (método fora do versionamento e removido no offboarding).
 - `grafo`: `graphify` ou `manual` (instalação falhou ou é inviável; ver seção 13).
 - `memoria.mcp`: opção explícita da implantação. `true` informa que o projeto quer expor briefing, busca e handoffs por MCP; o cliente continua precisando registrar `python .claude/hooks/memory_mcp.py` com o projeto como cwd.
+- `jev.enabled`: opt-in explícito para busca de contexto e decisões auxiliares do orquestrador. A busca FTS5 local reúne até 16 candidatos; Jev recebe a consulta e até oito snippets de Markdown para pontuá-los em uma chamada. Sem opt-in, chave ou resposta confiável, o resultado continua no ranking FTS5. Ative somente após explicar que consulta e snippets selecionados são enviados ao serviço externo. Configure `JEVMODEL_API_KEY` no ambiente do processo ou em `.env` local; nunca a grave em `.env.example`.
+- Para ativar: confirme o opt-in, defina `jev.enabled` como `true` e preencha `JEVMODEL_API_KEY` em `.env` local (ou no ambiente do processo). Verifique a busca com `python .claude/hooks/memory.py query "termos da busca"`; a saída informa se usou `Jev + FTS5` ou o fallback. Defina `enabled` como `false` para voltar às buscas e decisões somente FTS5/LLM local.
 - `bootstrap.opt_in`: registra que a instalação foi iniciada com o bootstrap adaptativo. `init_harness.py install --bootstrap` preserva fatos existentes, sincroniza o catálogo e grava um relatório inicial; não inventa fatos de domínio.
 - `providers`: adaptadores instalados. `claude` ativa settings/hooks nativos; `codex` gera `AGENTS.md`.
 - `autonomia`: define se tarefas seguras e checkpoints podem ser encadeados e mantém confirmação ou bloqueio para ações de risco.
@@ -265,7 +267,7 @@ Toda mudança tem arquivo de destino. Registrar **no mesmo checkpoint**, nunca e
 - Produção só com confirmação explícita e nomeada: ambiente, comando e dano possível se der errado.
 - **O controle mais forte contra dano em produção é o ambiente do agente não ter credencial de produção.** Nenhum hook substitui isso.
 - Volumes Docker nomeados só via `docker compose exec`. Nunca editar ou remover pelo host.
-- `.env`, chaves e tokens: nunca ler sem necessidade, nunca logar, nunca commitar, nunca enviar a serviço externo (URL, header ou payload).
+- `.env`, chaves e tokens: nunca expor ao agente, nunca logar nem commitar. Quando `jev.enabled` foi habilitado explicitamente, a integração envia a chave no header de autorização e os estados curtos preparados pelo orquestrador ou a consulta/snippets do FTS5. O classificador omite candidatos que casem com padrões locais de segredo.
 - Antes de comando destrutivo (`migrate:fresh`, `DROP`, `TRUNCATE`, `rm -rf`, `git reset --hard`, `--force`, remoção de volume): confirmar ambiente e conexão.
 - `blast_radius` com `cross_module` ou `cross_community` preenchido aumenta o nível de confirmação.
 - Revisar o conteúdo staged antes de commitar.

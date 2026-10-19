@@ -6,6 +6,7 @@
   "providers": ["claude", "codex"],
   "grafo": "graphify",
   "memoria": {"mcp": false},
+  "jev": {"enabled": false},
   "bootstrap": {"opt_in": false},
   "frente_inativa_horas": null,
   "autonomia": {

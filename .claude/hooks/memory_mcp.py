@@ -24,7 +24,10 @@ TOOLS = [
     },
     {
         "name": "harness_memory_query",
-        "description": "Pesquisa documentos operacionais, specs e handoffs com FTS local.",
+        "description": (
+            "Pesquisa documentos operacionais, specs e handoffs com FTS5 local e reranking Jev opcional; "
+            "sem opt-in/chave ou em falha usa somente FTS5."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}},
@@ -176,8 +179,9 @@ def _call(root: Path, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     if name == "harness_memory_query":
         query = str(arguments["query"])
         limit = int(arguments.get("limit", 8))
-        rows = memory.search(root, query, limit)
-        text = "\n".join(f"{path} [{kind}]\n  {snippet}" for path, kind, snippet in rows) or "Nenhum resultado."
+        rows, search_status = memory.search_with_status(root, query, limit)
+        results = "\n".join(f"{path} [{kind}]\n  {snippet}" for path, kind, snippet in rows) or "Nenhum resultado."
+        text = f"Busca: {search_status}\n{results}"
         return _text(text)
     if name == "harness_memory_retrieve":
         return _text("\n".join(memory.hybrid_recovery(root, str(arguments["query"]), int(arguments.get("limit", 8)))))
