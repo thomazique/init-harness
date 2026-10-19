@@ -15,6 +15,10 @@ from typing import Any
 
 from iniciativa_runtime import executar_iniciativa
 
+# Mesmo enum de `raciocinio` em .init-harness/schema/orquestracao.schema.json; vale para `--effort` (Claude)
+# e `model_reasoning_effort` (Codex).
+RACIOCINIOS = {"low", "medium", "high", "xhigh"}
+
 
 def ler_config(raiz: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     caminho = raiz / ".init-harness" / "orquestracao.json"
@@ -93,11 +97,14 @@ def comando_para(provedor: str, agente: dict[str, Any]) -> list[str]:
     modelo = agente["modelo"]
     if not re.fullmatch(r"[A-Za-z0-9_.:-]+", modelo):
         raise ValueError("o modelo precisa usar apenas letras ASCII, números, ponto, sublinhado, dois-pontos ou hífen")
+    raciocinio = agente.get("raciocinio")
+    if raciocinio is not None and raciocinio not in RACIOCINIOS:
+        raise ValueError(f"raciocinio precisa ser um de: {', '.join(sorted(RACIOCINIOS))}")
     if provedor == "claude":
         papel = agente["_papel"]
         ferramentas = "Read,Glob,Grep" if papel == "auditor" else "Read,Edit,Write,Glob,Grep,Bash"
         modo = "plan" if papel == "auditor" else "acceptEdits"
-        return [
+        comando = [
             caminho_executavel,
             "-p",
             "--no-session-persistence",
@@ -116,6 +123,9 @@ def comando_para(provedor: str, agente: dict[str, Any]) -> list[str]:
             "--allowedTools",
             ferramentas,
         ]
+        if raciocinio:
+            comando.extend(["--effort", raciocinio])
+        return comando
 
     sandbox = "read-only" if agente["_papel"] == "auditor" else "workspace-write"
     comando = [
@@ -131,7 +141,6 @@ def comando_para(provedor: str, agente: dict[str, Any]) -> list[str]:
         "--config",
         "mcp_servers={}",
     ]
-    raciocinio = agente.get("raciocinio")
     if raciocinio:
         comando.extend(["--config", f'model_reasoning_effort="{raciocinio}"'])
     comando.append("-")

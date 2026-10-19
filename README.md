@@ -1,10 +1,14 @@
-# init-harness 5.1.0
+# init-harness 5.1.1
 
 `init-harness` instala e atualiza uma base operacional para trabalhar com agentes de IA em
 repositórios Git. Mantém protocolo e contexto do projeto em arquivos versionáveis, registra
 o andamento entre sessões, conecta memória local e grafo de código, e adiciona skills e
 guardrails ao fluxo de trabalho. O harness serve a projetos diferentes: preserva os arquivos
 do projeto e adapta suas instruções ao código e às ferramentas existentes.
+
+A versão **5.1.1** corrige o agente `auditor-pilares`, que não iniciava, aplica o
+esforço configurado (`raciocinio`) às chamadas do Claude pelo runner CLI e faz o `doctor` ignorar
+IDs dentro de comentários HTML.
 
 A versão **5.1.0** adapta práticas do [gstack](https://github.com/garrytan/gstack) e do
 [Anthropic-Cybersecurity-Skills](https://github.com/mukul975/Anthropic-Cybersecurity-Skills).

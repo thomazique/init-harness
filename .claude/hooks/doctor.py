@@ -83,11 +83,30 @@ def colisoes(descricoes: dict[str, str], limiar: float = LIMIAR_COLISAO) -> list
 
 
 def _duplicate_ids(path: Path, pattern: str, first_column_only: bool = False) -> dict[str, list[int]]:
-    """Encontra identificadores duplicados sem interpretar o restante do Markdown."""
+    """Encontra identificadores duplicados sem interpretar o restante do Markdown.
+
+    Linhas dentro de comentário HTML (o modelo de entrada dos templates) não contam.
+    """
     if not path.is_file():
         return {}
     matches: dict[str, list[int]] = {}
+    em_comentario = False
     for line_number, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1):
+        visivel = ""
+        resto = line
+        while resto:
+            if em_comentario:
+                fim = resto.find("-->")
+                if fim < 0:
+                    break
+                em_comentario, resto = False, resto[fim + 3 :]
+            else:
+                inicio = resto.find("<!--")
+                if inicio < 0:
+                    visivel += resto
+                    break
+                visivel, em_comentario, resto = visivel + resto[:inicio], True, resto[inicio + 4 :]
+        line = visivel
         if first_column_only:
             subject = line.split("|", 2)[1] if line.lstrip().startswith("|") and "|" in line else ""
         else:
