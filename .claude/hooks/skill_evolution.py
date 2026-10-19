@@ -31,6 +31,7 @@ METHOD_SKILLS = {
     "record",
     "evolve",
     "orquestrar",
+    "investigar",
 }
 OUTCOMES = {"success", "failure", "partial", "blocked"}
 SOURCES = {"agent", "human", "test", "system"}

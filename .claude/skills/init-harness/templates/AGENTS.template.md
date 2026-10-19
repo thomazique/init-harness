@@ -29,6 +29,11 @@
   O agente principal coordena e delega a execução; não implementa diretamente
   subtarefas atribuídas. Usar `harness_executor` para executar e
   `harness_auditor` para revisar o diff agregado em sandbox somente de leitura.
+- Em erro, teste falhando ou comportamento inesperado, ler `.claude/skills/investigar/SKILL.md`
+  antes de corrigir: nenhuma correção sem causa raiz confirmada.
+- Antes de concluir, rodar `python .claude/hooks/gate_diff.py`; trecho que afrouxa um gate
+  (teste removido ou pulado, limiar relaxado, supressão, exceção engolida) só fica com
+  justificativa visível ou decisão humana.
 - Quando iniciado pelo runner CLI com um papel e uma tarefa atribuídos, atuar só nesse papel;
   não perguntar novamente o perfil, não coordenar nem delegar a outros agentes.
 - Se o cliente ou a sessão não disponibilizar subagentes, informar a limitação e

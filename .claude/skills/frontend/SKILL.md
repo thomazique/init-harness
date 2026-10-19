@@ -1,6 +1,6 @@
 ---
 name: frontend
-description: Orienta qualquer trabalho de frontend em qualquer framework ou plataforma, incluindo criação, revisão e correção de interfaces, componentes, estilos, navegação, responsividade, acessibilidade, temas e design systems. Use antes de iniciar toda tarefa que altere ou avalie uma interface; descubra primeiro o contexto, a stack, os padrões e as ferramentas do projeto.
+description: Orienta qualquer trabalho de frontend em qualquer framework ou plataforma, incluindo criação, revisão e correção de interfaces, componentes, estilos, navegação, responsividade, acessibilidade, temas e design systems. Use antes de iniciar toda tarefa que altere ou avalie uma interface; descubra primeiro o contexto, a stack, os padrões e as ferramentas do projeto. Não use para backend, banco ou API sem interface, nem para depurar a causa de um erro, que é investigar.
 ---
 
 # Frontend

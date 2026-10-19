@@ -21,6 +21,66 @@ if hasattr(sys.stdout, "reconfigure"):
 import _lib as L  # noqa: E402
 import skill_evolution as E  # noqa: E402
 
+# Qualidade de roteamento de skill (adaptado das ferramentas do Anthropic-Cybersecurity-Skills, Apache-2.0):
+# a description é o único texto que o agente vê para decidir carregar a skill.
+DESCRICAO_MAX = 1024
+CORPO_MAX_LINHAS = 500
+LIMIAR_COLISAO = 0.5
+GATILHO = re.compile(
+    r"(?i)\b(?:use|usar)\s+(?:esta\s+skill\s+|this\s+skill\s+)?"
+    r"(?:quando|sempre|em|na|no|nas|nos|antes|ao|após|depois|para|durante|when|whenever|for|before|after|during)\b"
+)
+NEGATIVO = re.compile(r"(?i)\b(?:não|nunca)\s+(?:use|usar)\b|\bdo\s+not\s+use\b|\bdon'?t\s+use\b|\bnot\s+for\b")
+PALAVRAS_VAZIAS = set(
+    """
+    a o as os um uma de do da dos das e ou em no na nos nas por para com sem que se ao à é ser use usar quando
+    sempre antes depois skill skills the an and or of to for in on with when this that is are be by from as it
+    """.split()
+)
+
+
+def avisos_de_skill(nome: str, meta: dict, texto: str) -> list[str]:
+    """Avisos de roteamento: gatilho positivo, gatilho negativo, tamanho da description e do corpo."""
+    descricao = " ".join(str(meta.get("description") or "").split())
+    avisos = []
+    if len(descricao) > DESCRICAO_MAX:
+        avisos.append(f"{nome}: description com {len(descricao)} caracteres (máximo {DESCRICAO_MAX})")
+    if descricao and not GATILHO.search(descricao):
+        avisos.append(f"{nome}: description sem gatilho ('Use quando ...')")
+    if descricao and not NEGATIVO.search(descricao):
+        avisos.append(f"{nome}: description sem gatilho negativo ('Não use para X, que é <outra-skill>.')")
+    linhas = texto.count("\n") + 1
+    if linhas > CORPO_MAX_LINHAS:
+        avisos.append(f"{nome}: SKILL.md com {linhas} linhas (máximo {CORPO_MAX_LINHAS}; detalhe vai para references/)")
+    return avisos
+
+
+def _termos(descricao: str) -> dict[str, int]:
+    descritiva = NEGATIVO.split(descricao, maxsplit=1)[0]
+    termos: dict[str, int] = {}
+    for palavra in re.findall(r"\w+", descritiva.lower()):
+        if len(palavra) > 2 and palavra not in PALAVRAS_VAZIAS:
+            termos[palavra] = termos.get(palavra, 0) + 1
+    return termos
+
+
+def colisoes(descricoes: dict[str, str], limiar: float = LIMIAR_COLISAO) -> list[tuple[str, str, float]]:
+    """Pares de skills cuja parte descritiva concorre pelo mesmo pedido e que não se distinguem pelo nome."""
+    vetores = {nome: _termos(d) for nome, d in descricoes.items()}
+    nomes = sorted(vetores)
+    pares = []
+    for i, a in enumerate(nomes):
+        for b in nomes[i + 1 :]:
+            va, vb = vetores[a], vetores[b]
+            norma = (sum(v * v for v in va.values()) * sum(v * v for v in vb.values())) ** 0.5
+            if not norma:
+                continue
+            similaridade = sum(va[t] * vb.get(t, 0) for t in va) / norma
+            distinguidas = b in descricoes[a] or a in descricoes[b]
+            if similaridade >= limiar and not distinguidas:
+                pares.append((a, b, round(similaridade, 2)))
+    return pares
+
 
 def _duplicate_ids(path: Path, pattern: str, first_column_only: bool = False) -> dict[str, list[int]]:
     """Encontra identificadores duplicados sem interpretar o restante do Markdown."""
@@ -117,6 +177,7 @@ def main() -> int:
         ".claude/hooks/skill_observe.py",
         ".claude/hooks/skill_worker.py",
         ".claude/hooks/skill_reviewer.py",
+        ".claude/hooks/gate_diff.py",
         ".githooks/pre-commit",
         ".githooks/pre_commit.py",
         ".init-harness/schema/config.schema.json",
@@ -230,6 +291,7 @@ def main() -> int:
 
     skills_dir = raiz / ".claude" / "skills"
     problemas_skills: list[str] = []
+    descricoes: dict[str, str] = {}
     arquivos_skill = sorted(skills_dir.glob("*/SKILL.md")) if skills_dir.is_dir() else []
     for arquivo in arquivos_skill:
         nome_dir = arquivo.parent.name
@@ -246,6 +308,14 @@ def main() -> int:
             )
         if not meta.get("description"):
             problemas_skills.append(f"{nome_dir}: description ausente ou vazia no frontmatter{dica}")
+            continue
+        descricoes[nome_dir] = meta["description"]
+        avisos.extend("skill: " + aviso for aviso in avisos_de_skill(nome_dir, meta, texto))
+    for a, b, similaridade in colisoes(descricoes):
+        avisos.append(
+            f"skills {a} e {b} concorrem pelo mesmo pedido (similaridade {similaridade}); "
+            "acrescente a uma delas 'Não use para X, que é <a outra>.'"
+        )
     if problemas_skills:
         for problema in problemas_skills:
             erros.append("skill inválida: " + problema)

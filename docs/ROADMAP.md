@@ -29,6 +29,13 @@ Cada sessão que usa uma skill gera uma experiência e um job, inclusive as bem-
 o worker encerra como `no_action`. Decidir com uso real se `.init-harness/skills/queue/` deve
 ser versionado, ignorado ou podado, e se sessões sem falha precisam virar job.
 
+### Trava de escopo durante investigação
+
+A skill `investigar` pede diff mínimo, mas não trava edições fora do módulo investigado. O
+gstack faz isso com um diretório-limite por sessão que o hook de arquivos respeita. Decidir com
+uso real se o `guard_files.py` deve ler um limite gravado no estado da sessão e como liberá-lo
+quando a sessão morre.
+
 ### Sincronização para equipes e múltiplas máquinas
 
 Investigar compartilhamento controlado de Markdown canônico, conflitos,

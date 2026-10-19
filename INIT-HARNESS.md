@@ -1,6 +1,6 @@
 # INIT-HARNESS.md
 
-> **harness_version: 5.0.2**
+> **harness_version: 5.1.0**
 > Protocolo de operação genérico, válido para qualquer projeto. O que o projeto **é** fica em `CLAUDE.md` e `docs/ai/`. Aqui fica **como** operar. Este arquivo não é editado por projeto.
 
 ---
@@ -13,6 +13,8 @@
 4. **Não inventar.** Schema, assinatura, comando, versão, comportamento de dependência: sem confirmação em código real ou documentação, parar e pedir.
 5. **Grafo antes de leitura, leitura antes de agente.** Estrutura se descobre com ferramenta determinística, não lendo arquivo por arquivo nem delegando exploração a subagente.
 6. **Específico vence genérico.** `CLAUDE.md` pode adaptar defaults deste protocolo ao projeto (por exemplo branch e PR), mas nunca enfraquecer segurança, política de negócio ou proteção de dados sem confirmação explícita do usuário.
+7. **Afirmação exige evidência.** Execução alegada cita o comando e o resultado observado; comando com stderr silenciado não serve de prova. Dizer o tipo de evidência (leitura estática, teste unitário, fixture, execução real, produção) e nunca passar um por outro: mock não é verificação real. Falha ou cobertura ausente que mudaria a conclusão é declarada. Resultado nulo verificado ("rodei X, nada encontrado") é resultado; afirmação positiva sem suporte é pior que silêncio. Relatório de subagente é afirmação até ser conferido.
+8. **Gate não se afrouxa para passar.** Apagar ou pular teste, aumentar timeout ou retry, baixar limiar, trocar contagem exata por limite, adicionar `# noqa`/`@ts-ignore`, engolir exceção ou usar `--no-verify` são decisões humanas nomeadas, com motivo na PR, nunca atalho do agente. `.claude/hooks/gate_diff.py` lista esses trechos no diff.
 
 ---
 
@@ -41,7 +43,7 @@
 
 ```json
 {
-  "harness_version": "5.0.2",
+  "harness_version": "5.1.0",
   "modo": "proprio",
   "instalado_em": "AAAA-MM-DD",
   "providers": ["claude", "codex"],
@@ -197,7 +199,9 @@ Qualquer outro caso é não trivial e passa pela skill `spec`.
 4. Executar **um** checkpoint.
 5. Verificar com os comandos de teste, lint e typecheck definidos no `CLAUDE.md`. Checkpoint sem verificação não fecha.
 6. Registrar conforme a seção 6.
-7. Informar o que mudou e qual o próximo. Esperar confirmação se houver risco ou ambiguidade.
+7. Informar o que mudou e qual o próximo, com um status: **CONCLUÍDO** (evidência válida para o estado final), **CONCLUÍDO_COM_RESSALVAS** (listar o que não foi verificado), **BLOQUEADO** (o bloqueio e o que foi tentado) ou **FALTA_CONTEXTO** (exatamente o que falta). Esperar confirmação se houver risco ou ambiguidade.
+
+Erro, teste falhando ou comportamento inesperado passam pela skill `investigar` antes da correção: nenhuma correção sem causa raiz confirmada, e três hipóteses refutadas param o trabalho para falar com o usuário.
 
 Com `autonomia.tarefas_seguras` e `autonomia.apos_checkpoint` em `continuar`, o agente pode encadear trabalho seguro dentro do objetivo já autorizado. Valores `parar`, preferências mais específicas do `CLAUDE.md` e qualquer risco sobre produção, dado, credencial ou política continuam interrompendo o fluxo.
 
@@ -285,8 +289,12 @@ Duas camadas:
 | Ler ou escrever `.env` | `permissions.deny` em `./.env` + `guard_files.py` (variantes, exceto `.example`, `.sample`, `.template`, `.dist`) | Nega |
 | `.env` citado em comando de shell | `guard_bash.py` | Pergunta |
 | Comando destrutivo de dados | `guard_bash.py` + ambiente e autonomia de `.init-harness/config.json` | Conforme a política mais restritiva |
-| Comando destrutivo de git ou arquivos | `guard_bash.py` | Pergunta |
+| Comando destrutivo de git, arquivos ou infraestrutura (inclusive aliases de PowerShell e `rd /s` do cmd) | `guard_bash.py` | Pergunta; remoção só de pastas de build conhecidas passa |
+| Remoção recursiva da raiz ou da home, force-push na branch padrão (comando simples) | `guard_bash.py` | Nega |
+| Comando ofuscado ou não inspecionável (`${IFS}`, base64 para shell, `iex`, `-EncodedCommand`) | `guard_bash.py` | Pergunta |
+| Padrão de risco próprio do projeto | `guard_bash.py` + `guardrails.bash_extras` em `.init-harness/config.json` (só acrescenta) | Pergunta |
 | Contornar verificação (`--no-verify`, `HARNESS_SEM_CONTEXTO`, alterar `core.hooksPath`) | `guard_bash.py` | Nega |
+| Gate afrouxado no diff (teste removido ou pulado, limiar relaxado, supressão, exceção engolida) | `.githooks/pre_commit.py` + `gate_diff.py`; seção GATES na auditoria do supervisor e no relatório do chefe | Avisa; a decisão é humana |
 | Segredo escrito em código | `guard_files.py` + `.githooks/pre_commit.py` | Padrão forte nega; genérico pergunta (no commit, avisa) |
 | `git push` | `permissions.ask` + proteção de branch no remoto | Pergunta |
 | Alterar plano de controle | `permissions.ask` em `settings.json`, `config.json`, `hooks/`, `.githooks/`, `.github/`, `.mcp.json` | Pergunta |
@@ -405,7 +413,7 @@ Detalhes na skill `commit`. Regra de ouro: **mensagem nasce do diff, nunca da me
 | | `proprio` | `cliente` |
 |---|---|---|
 | `INIT-HARNESS.md` | Versionado, permanente | `.git/info/exclude`, removido no offboarding |
-| Skills de método (`init-harness`, `frontend`, `spec`, `pilares`, `commit`, `offboarding`, `orquestrar`) | Versionadas | `.git/info/exclude`, removidas no offboarding |
+| Skills de método (`init-harness`, `frontend`, `spec`, `pilares`, `commit`, `offboarding`, `orquestrar`, `investigar`) | Versionadas | `.git/info/exclude`, removidas no offboarding |
 | `.claude/agents/auditor-pilares.md`, `.claude/settings.init-harness.json` | Versionados | `.git/info/exclude`, removidos no offboarding |
 | `.claude/agents/executor.md`, `.claude/agents/revisor.md`, `.codex/agents/harness_executor.toml`, `.codex/agents/harness_auditor.toml` | Versionados | Versionados, permanecem |
 | `CLAUDE.md`, `docs/ai/`, `specs/` | Versionados | Versionados, permanecem |
@@ -431,8 +439,14 @@ A camada que permanece no modo `cliente` precisa operar sem este arquivo. O offb
 | `offboarding` | Encerramento de implantação em modo `cliente` |
 | `frontend` | Qualquer criação, revisão, correção ou alteração de interface frontend |
 | `orquestrar` | Toda solicitação de implementação ou alteração de software |
+| `investigar` | Erro, teste falhando, regressão ou comportamento inesperado, antes de corrigir |
 
-Diagnóstico da instalação: `uv run --no-project --python ">=3.10" .claude/hooks/doctor.py`.
+Diagnóstico da instalação: `uv run --no-project --python ">=3.10" .claude/hooks/doctor.py`. O diagnóstico também avisa
+quando a description de uma skill não tem gatilho ("Use quando ...") nem gatilho negativo ("Não use para X, que é
+<outra-skill>."), passa de 1024 caracteres, o `SKILL.md` passa de 500 linhas ou duas skills concorrem pelo mesmo pedido.
+
+Integridade de gates do diff: `uv run --no-project --python ">=3.10" .claude/hooks/gate_diff.py` (árvore de trabalho),
+`--staged` ou `--base <branch>`.
 
 ---
 

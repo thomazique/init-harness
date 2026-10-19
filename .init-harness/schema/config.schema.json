@@ -66,6 +66,25 @@
         "politica_negocio": {"enum": ["confirmar", "bloquear"]}
       }
     },
+    "guardrails": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "bash_extras": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Regex adicionais que pedem confirmação no guard_bash; nunca removem uma regra do kit."
+        },
+        "gates": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "caminhos_teste": {"type": "array", "items": {"type": "string"}},
+            "caminhos_snapshot": {"type": "array", "items": {"type": "string"}}
+          }
+        }
+      }
+    },
     "orquestracao": {
       "type": "object",
       "additionalProperties": false,

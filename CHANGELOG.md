@@ -1,5 +1,25 @@
 # Changelog
 
+## 5.1.0 — integridade de gates, depuração por causa raiz e guardrails mais amplos
+
+Práticas adaptadas do gstack (MIT) e do Anthropic-Cybersecurity-Skills (Apache-2.0); origem em `NOTICE.md`.
+
+### Adicionado
+
+- `.claude/hooks/gate_diff.py`: lista no diff os trechos que afrouxam um gate (RH-1 teste removido ou pulado, RH-3 snapshot sem o teste dono, RH-4 placeholder, RH-12 código que detecta teste/CI, RH-13 supressão de lint, RH-14 gate contornado, RH-15 limiar ou timeout relaxado, RH-16 exceção engolida). Modos árvore de trabalho, `--staged` e `--base`; caminhos extras em `guardrails.gates`.
+- Pre-commit avisa, sem falhar, sobre gates afrouxados no que está em stage.
+- Orquestração: a auditoria do supervisor recebe a seção GATES do escopo da frente e o `relatorio_para_chefe.json` traz o campo `gates` por frente.
+- Skill `investigar`: depuração por causa raiz com hipótese testável, regra das 3 tentativas, teste de regressão que falha antes da correção, limite de 5 arquivos e receita para teste intermitente.
+- Princípios 7 (afirmação exige evidência) e 8 (gate não se afrouxa para passar) e status de conclusão (CONCLUÍDO, CONCLUÍDO_COM_RESSALVAS, BLOQUEADO, FALTA_CONTEXTO) no `INIT-HARNESS.md`.
+- `doctor` avisa description de skill sem gatilho ou sem gatilho negativo, acima de 1024 caracteres, `SKILL.md` acima de 500 linhas e pares de skills que concorrem pelo mesmo pedido.
+- Pilares: autorização em todo caminho, comando/caminho/desserialização, segredo fora de log e URL, uso correto de criptografia, sessão e troca de identidade, webhook, CI/CD, memória do agente, MCP de terceiro, skills e hooks de fora revisados como código, gates íntegros; rubrica de consequência, confiança e evidência; referências OWASP 2025, API 2023 e LLM 2025.
+- Supervisor de segurança com modelo da mudança, STRIDE por fronteira, checklist de autorização, injeção, criptografia, LLM/MCP e CI/CD e rubrica do achado.
+
+### Alterado
+
+- `guard_bash`: pede confirmação para `git checkout .`, `git restore .`, `git stash clear|drop`, force-push por refspec `+`, remoção de branch remota, `kubectl delete`, `helm uninstall`, `terraform destroy`, `docker rm -f`, aliases de PowerShell (`ri -r -fo`), `rd /s` do cmd, `Clear-Disk`/`Format-Volume` e comandos ofuscados ou não inspecionáveis (`${IFS}`, base64 para shell, `iex`, `-EncodedCommand`). Nega remoção recursiva da raiz ou da home e force-push na branch padrão em comando simples. Remoção só de pastas de build conhecidas (`node_modules`, `dist`, `__pycache__`...) deixa de pedir confirmação. `guardrails.bash_extras` acrescenta padrões do projeto.
+- Descriptions das skills do kit ganharam gatilho negativo apontando a skill vizinha.
+
 ## 5.0.2 — Jev opcional para contexto e triagem de orquestração
 
 ### Adicionado

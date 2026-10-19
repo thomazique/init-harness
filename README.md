@@ -1,10 +1,19 @@
-# init-harness 5.0.2
+# init-harness 5.1.0
 
 `init-harness` instala e atualiza uma base operacional para trabalhar com agentes de IA em
 repositórios Git. Mantém protocolo e contexto do projeto em arquivos versionáveis, registra
 o andamento entre sessões, conecta memória local e grafo de código, e adiciona skills e
 guardrails ao fluxo de trabalho. O harness serve a projetos diferentes: preserva os arquivos
 do projeto e adapta suas instruções ao código e às ferramentas existentes.
+
+A versão **5.1.0** adapta práticas do [gstack](https://github.com/garrytan/gstack) e do
+[Anthropic-Cybersecurity-Skills](https://github.com/mukul975/Anthropic-Cybersecurity-Skills).
+Ela traz um scanner de integridade de gates, que lista no diff testes removidos ou pulados,
+limiares relaxados, supressões de lint e exceções engolidas, e alimenta o pre-commit e a
+auditoria da orquestração. Também traz a skill `investigar`, de depuração por causa raiz, um
+`guard_bash` com cobertura de PowerShell e cmd, comandos ofuscados e bloqueio de remoção da
+raiz e de force-push na branch padrão, pilares de segurança para OWASP 2025, MCP, CI/CD e
+cadeia de suprimento de skills, e lint de roteamento das descriptions de skill no `doctor`.
 
 A versão **5.0.2** adiciona Jev opcional para reordenar contexto recuperado pelo FTS5 e fornecer rótulos estruturados ao orquestrador antes do despacho e nos gates de fase, com fallback automático, controle explícito e chave fora do repositório. A versão **5.0.1** separa os modelos por nível da orquestração e inclui perfis de Claude, OpenAI e uso combinado, filtrados pelos provedores selecionados na instalação. A versão **5.0.0** acrescentou especialidades por frente, presets para supervisores e contexto direcionado por tarefa para construtores. O fluxo permanece **chefe > supervisores > construtores**, com auditoria final do chefe sem executar testes e revisões direcionadas por tarefa.
 
@@ -30,6 +39,11 @@ padrões de produto. O analisador é consultivo por padrão e só falha quando o
   arquivos afetados. O modo manual permite instalar sem Graphify.
 - **Protocolos e guardrails:** adaptadores para Claude Code e Codex, skills operacionais,
   hooks e verificações Git para reduzir riscos no fluxo de edição.
+- **Integridade de gates:** `.claude/hooks/gate_diff.py` lista no diff os trechos que afrouxam
+  um gate em vez de satisfazê-lo; avisa no pre-commit e entra na auditoria do supervisor e do
+  chefe. A marca é factual; a decisão é humana.
+- **Depuração por causa raiz:** a skill `investigar` exige hipótese testável, reprodução e
+  teste de regressão que falha antes da correção, e para depois de três hipóteses refutadas.
 - **Orquestração multiagente:** o protocolo define chefe, supervisores por frente/spec e construtores por subtarefa, com alinhamento entre supervisores, escopo explícito e auditoria final pelo chefe.
 - **Aprendizado controlado de skills:** captura experiências locais, agrupa sugestões,
   mantém fila e propostas, avalia candidatas e exige decisão humana antes de promover uma
@@ -209,6 +223,7 @@ integração externa. O projeto não coleta telemetria própria; veja
 - [Código de conduta](CODE_OF_CONDUCT.md): convivência nos espaços oficiais.
 - [Roadmap](docs/ROADMAP.md): direção atual e frentes futuras sob validação.
 - [Licença MIT](LICENSE): uso, modificação e distribuição.
+- [Avisos de terceiros](NOTICE.md): origem das práticas adaptadas de outros projetos.
 
 ## Desenvolvimento
 

@@ -1,6 +1,6 @@
 {
   "$schema": "./schema/config.schema.json",
-  "harness_version": "5.0.2",
+  "harness_version": "5.1.0",
   "modo": "proprio",
   "instalado_em": "AAAA-MM-DD",
   "providers": ["claude", "codex"],

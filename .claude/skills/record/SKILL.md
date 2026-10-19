@@ -1,6 +1,6 @@
 ---
 name: record
-description: Registra uma experiência relevante da sessão para alimentar a evolução de uma skill do projeto. Use quando uma skill falhar, exigir correção humana, produzir um resultado inesperado ou revelar uma melhoria clara.
+description: Registra uma experiência relevante da sessão para alimentar a evolução de uma skill do projeto. Use quando uma skill falhar, exigir correção humana, produzir um resultado inesperado ou revelar uma melhoria clara. Não use para escrever a melhoria da skill, que é evolve, nem para registrar estado de frente, que vai em docs/ai/.
 ---
 # record
 

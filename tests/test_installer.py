@@ -182,6 +182,41 @@ class InstallerTest(unittest.TestCase):
                 self.assertIn(f".claude/skills/{skill.name}", init_harness.MANAGED_TREES)
                 self.assertIn(f".claude/skills/{skill.name}/", lib.METODO_CLIENTE)
 
+    def test_skills_do_kit_passam_no_lint_de_roteamento(self) -> None:
+        sys.path.insert(0, str(KIT / ".claude/hooks"))
+        try:
+            import doctor
+            import skill_evolution
+        finally:
+            sys.path.remove(str(KIT / ".claude/hooks"))
+        descricoes = {}
+        for arquivo in sorted((KIT / ".claude/skills").glob("*/SKILL.md")):
+            texto = arquivo.read_text(encoding="utf-8")
+            meta = skill_evolution.parse_frontmatter(texto)
+            descricoes[arquivo.parent.name] = meta["description"]
+            with self.subTest(skill=arquivo.parent.name):
+                self.assertEqual([], doctor.avisos_de_skill(arquivo.parent.name, meta, texto))
+        self.assertEqual([], doctor.colisoes(descricoes))
+
+    def test_doctor_avisa_skill_sem_gatilho_negativo_e_colisao_sem_reprovar(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+
+            def adicionar(target: Path) -> None:
+                for nome in ("relatorio-vendas", "relatorio-vendas-mensal"):
+                    pasta = target / ".claude/skills" / nome
+                    pasta.mkdir(parents=True)
+                    (pasta / "SKILL.md").write_text(
+                        f"---\nname: {nome}\ndescription: Gera relatório de vendas por região e produto. "
+                        "Use quando pedirem relatório de vendas.\n---\n# corpo\n",
+                        encoding="utf-8",
+                    )
+
+            doctor = self._install_and_doctor(Path(tmp) / "projeto", adicionar)
+
+            self.assertEqual(0, doctor.returncode, doctor.stdout)
+            self.assertIn("relatorio-vendas: description sem gatilho negativo", doctor.stdout)
+            self.assertIn("skills relatorio-vendas e relatorio-vendas-mensal concorrem", doctor.stdout)
+
     def test_instalador_nao_distribui_bytecode_das_arvores_gerenciadas(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp)

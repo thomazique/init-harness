@@ -4,7 +4,8 @@
 Verificações de commit do harness. Vale para humano, Claude Code e qualquer outra ferramenta.
 Falha (exit 1): segredo forte, arquivo .env sensível, método do harness em modo cliente,
 código sem contexto (docs/ai/ ou specs/) quando o harness está implantado.
-Aviso (não falha): segredo genérico, mudança estrutural sem docs/ai/ESTRUTURA.md.
+Aviso (não falha): segredo genérico, mudança estrutural sem docs/ai/ESTRUTURA.md,
+trecho que afrouxa um gate (teste, lint, CI) segundo .claude/hooks/gate_diff.py.
 """
 
 from __future__ import annotations
@@ -55,6 +56,20 @@ def main() -> int:
             erros.append(f"{atual}: padrão de segredo ({f}).")
         for g in genericos:
             avisos.append(f"{atual}: valor literal atribuído a '{g}'. Confirme que não é credencial.")
+
+    try:
+        import gate_diff
+
+        gates = gate_diff.varrer(RAIZ, staged=True)
+        for t in gates["trechos"]:
+            for marca in t["marcas"]:
+                avisos.append(
+                    f"{t['caminho']}: gate {marca} ({gate_diff.DESCRICAO.get(marca, marca)}). "
+                    "Confirme que não silencia a falha que o gate pegava; "
+                    "detalhe em `python .claude/hooks/gate_diff.py --staged`."
+                )
+    except Exception:
+        avisos.append("varredura de gates indisponível neste commit (.claude/hooks/gate_diff.py).")
 
     if h:
         codigo = [c for c in staged if L.e_codigo(c) and not c.startswith((".claude/", ".githooks/"))]

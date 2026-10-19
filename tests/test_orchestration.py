@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -93,6 +95,25 @@ class OrchestrationTest(unittest.TestCase):
         self.assertEqual("pausada", paused["estado"])
         self.assertEqual(["Qual ambiente alvo?"], paused["questions"])
         self.assertEqual("chief_review", paused["pending_checkpoint"]["stage"])
+
+    def test_gate_scan_marks_relaxed_gates_in_front_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+
+            def git(*args: str) -> None:
+                subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+            git("init", "-q")
+            git("config", "user.email", "t@t")
+            git("config", "user.name", "t")
+            (repo / "tests").mkdir()
+            (repo / "tests" / "test_a.py").write_text("def test_a():\n    assert True\n", encoding="utf-8")
+            git("add", "-A")
+            git("commit", "-qm", "base")
+            (repo / "tests" / "test_a.py").write_text("", encoding="utf-8")
+            self.assertIn("marcas={RH-1:1}", runtime._gate_scan(KIT, repo, ["tests/"]))
+            self.assertIn("marcas={nenhuma}", runtime._gate_scan(KIT, repo, ["src/"]))
+            self.assertIn("indisponível", runtime._gate_scan(repo, repo, ["tests/"]))
 
 
 if __name__ == "__main__":

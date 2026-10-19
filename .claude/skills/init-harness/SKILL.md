@@ -1,6 +1,6 @@
 ---
 name: init-harness
-description: Implantação do harness em projeto sem `.init-harness/config.json`. Use ao entrar em projeto novo ou existente que ainda não tem o harness implantado, ou quando o usuário pedir para implantar, inicializar ou mapear o projeto. Instala e gera o grafo, entende o projeto gastando o mínimo de contexto, pergunta só o que não é derivável do código e termina com CLAUDE.md, docs/ai/ e harness.json reais.
+description: Implantação do harness em projeto sem `.init-harness/config.json`. Use ao entrar em projeto novo ou existente que ainda não tem o harness implantado, ou quando o usuário pedir para implantar, inicializar ou mapear o projeto. Instala e gera o grafo, entende o projeto gastando o mínimo de contexto, pergunta só o que não é derivável do código e termina com CLAUDE.md, docs/ai/ e harness.json reais. Não use em projeto que já tem `.init-harness/config.json`; atualização do kit é `init_harness.py upgrade`.
 ---
 # init-harness
 
