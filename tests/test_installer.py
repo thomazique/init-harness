@@ -810,6 +810,20 @@ class InstallerTest(unittest.TestCase):
             )
             self.assertEqual(0, briefing_after_accept.returncode, briefing_after_accept.stderr)
             self.assertNotIn("Handoff aberto", briefing_after_accept.stdout)
+            # Worktree temporário ou sandbox somente leitura: sem índice, o briefing degrada para o Markdown.
+            memory_dir = target / ".init-harness" / "memory"
+            memory_dir.rename(memory_dir.with_name("memory.bak"))
+            memory_dir.write_text("", encoding="utf-8")
+            try:
+                without_index = subprocess.run(
+                    [sys.executable, str(script), "briefing"], cwd=target, capture_output=True, text=True
+                )
+            finally:
+                memory_dir.unlink()
+                memory_dir.with_name("memory.bak").rename(memory_dir)
+            self.assertEqual(0, without_index.returncode, without_index.stderr)
+            self.assertIn("Índice de memória indisponível", without_index.stdout)
+            self.assertIn("Contexto crítico", without_index.stdout)
             claimed_again = subprocess.run(
                 [
                     sys.executable,

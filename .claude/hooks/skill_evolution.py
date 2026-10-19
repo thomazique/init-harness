@@ -1727,7 +1727,18 @@ def parser() -> argparse.ArgumentParser:
     return root
 
 
+def forcar_utf8() -> None:
+    """Mesmo comportamento de _lib.forcar_utf8: console Windows em cp1252 não quebra a saída JSON."""
+    for fluxo in (sys.stdin, sys.stdout, sys.stderr):
+        if hasattr(fluxo, "reconfigure"):
+            try:
+                fluxo.reconfigure(encoding="utf-8")
+            except (OSError, ValueError):  # gate-ok: melhor esforço; sem ele a saída segue na codificação local
+                pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    forcar_utf8()
     args = parser().parse_args(argv)
     root = project_root(args.root)
     if args.command == "list":

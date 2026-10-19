@@ -32,6 +32,11 @@ CAMINHOS_EXPLICITOS = (
     "sem seta (->) e sem diretório. Para mover arquivo, declare o path de origem e o de destino como itens "
     "separados da mesma tarefa. "
 )
+REGRA_ESCOPO = (
+    "O scope do manifesto prevalece sobre a spec, a frente e seus checkpoints: arquivo fora dele não entra em "
+    "tarefa, mesmo que algum texto pareça autorizá-lo, e isso não é motivo de pergunta. O runner já conferiu "
+    "base_commit e files da spec contra o manifesto antes desta chamada; não pergunte sobre esses metadados. "
+)
 FORMATO_PLANO = (
     '{"tasks":[{"id":"T1","objective":"...","files":["src/a.py"],"depends_on":[],'
     '"acceptance":["..."],"pair_with":[]}],"interfaces":["..."],"questions":[]}'
@@ -232,6 +237,96 @@ def _lista_texto(obj: dict[str, Any], key: str, label: str) -> list[str]:
     return value
 
 
+def _caminho_invalido(name: str) -> bool:
+    path = PurePosixPath(name.replace("\\", "/"))
+    return (
+        path.is_absolute()
+        or ".." in path.parts
+        or not name
+        or name.endswith("/")
+        or any(char in name for char in "*?[]")
+        or "->" in name
+    )
+
+
+def _no_escopo(name: str, scope: list[str]) -> bool:
+    return any(name.startswith(p) if p.endswith("/") else fnmatch.fnmatch(name, p) for p in scope)
+
+
+def _frontmatter(text: str) -> dict[str, Any]:
+    """Frontmatter simples de spec e frente: escalares, listas com '-' e listas inline [a, b]."""
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}
+    data: dict[str, Any] = {}
+    key = None
+    for line in lines[1:]:
+        if line.strip() == "---":
+            break
+        item = re.match(r"\s+-\s+(.*)$", line)
+        if item and key is not None:
+            if not isinstance(data.get(key), list):
+                data[key] = []
+            data[key].append(item.group(1).strip().strip("'\""))
+            continue
+        pair = re.match(r"([A-Za-z_][\w-]*):\s*(.*)$", line)
+        if pair:
+            key, value = pair.group(1), pair.group(2).strip()
+            if value.startswith("[") and value.endswith("]"):
+                data[key] = [x.strip().strip("'\"") for x in value[1:-1].split(",") if x.strip()]
+            else:
+                data[key] = value
+    return data
+
+
+def _commit(repo: Path, ref: str) -> str | None:
+    result = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", ref + "^{commit}"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def _preflight(repo: Path, front: dict[str, Any], fronts: list[dict[str, Any]]) -> list[str]:
+    """Confere a spec e a frente contra o manifesto sem chamar modelo; erros recusam, avisos vão ao plano."""
+    spec = _frontmatter((repo / front["spec"]).read_text(encoding="utf-8"))
+    errors: list[str] = []
+    warnings: list[str] = []
+    base = spec.get("base_commit")
+    if isinstance(base, str) and base and not base.startswith("<"):
+        resolved = _commit(repo, base)
+        if resolved is None or resolved != _commit(repo, front["base_commit"]):
+            errors.append(
+                f"base_commit da spec ({base}) não é o base_commit do manifesto ({front['base_commit']}); "
+                "alinhe os dois"
+            )
+    files = spec.get("files", [])
+    other_scopes = [p for f in fronts if f["id"] != front["id"] for p in f["scope"]]
+    for name in files if isinstance(files, list) else []:
+        if _caminho_invalido(name):
+            errors.append(f"files da spec usa notação não explícita: {name}; liste um path de arquivo por item")
+        elif not _no_escopo(name, front["scope"]) and not _no_escopo(name, other_scopes):
+            errors.append(f"files da spec cita {name}, fora do scope do manifesto; amplie o scope ou tire da spec")
+    front_doc = spec.get("frente")
+    if isinstance(front_doc, str) and front_doc and not front_doc.startswith("<"):
+        path = (repo / front_doc).resolve()
+        if path.is_relative_to(repo) and path.is_file():
+            listed = _frontmatter(path.read_text(encoding="utf-8")).get("files", "")
+            names = listed if isinstance(listed, list) else [x.strip() for x in listed.split(",")]
+            for name in (x for x in names if x and x != "-"):
+                if _caminho_invalido(name) or not _no_escopo(name, front["scope"] + other_scopes):
+                    warnings.append(f"{front_doc} cita {name}, fora do scope desta iniciativa; fica fora das tarefas")
+    if errors:
+        raise ValueError(
+            f"preflight da frente {front['id']} recusou a iniciativa antes de qualquer chamada:\n- "
+            + "\n- ".join(errors)
+        )
+    return warnings
+
+
 def _validar_plan(front: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
     tasks = plan.get("tasks")
     if not isinstance(tasks, list):
@@ -240,6 +335,7 @@ def _validar_plan(front: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]
     _lista_texto(plan, "interfaces", front["id"])
     _lista_texto(plan, "questions", front["id"])
     seen: set[str] = set()
+    owners: dict[str, str] = {}
     for task in tasks:
         _normalizar_textos(task, ("acceptance",))
         if not isinstance(task, dict) or not isinstance(task.get("id"), str) or not _ID.fullmatch(task["id"]):
@@ -260,24 +356,19 @@ def _validar_plan(front: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]
         ):
             raise ValueError(f"task {task['id']}.pair_with precisa ser uma lista de ids")
         for name in task["files"]:
-            path = PurePosixPath(name.replace("\\", "/"))
-            if (
-                path.is_absolute()
-                or ".." in path.parts
-                or not name
-                or name.endswith("/")
-                or any(char in name for char in "*?[]")
-                or "->" in name
-            ):
+            if _caminho_invalido(name):
                 raise ValueError(
                     f"caminho de arquivo inseguro em {task['id']}: {name}; use um path explícito de arquivo por "
                     "item, sem glob, seta ou diretório, e declare origem e destino ao mover"
                 )
-            if not any(
-                name.startswith(pattern) if pattern.endswith("/") else fnmatch.fnmatch(name, pattern)
-                for pattern in front["scope"]
-            ):
+            if not _no_escopo(name, front["scope"]):
                 raise ValueError(f"arquivo fora do scope da frente {front['id']}: {name}")
+            if name in owners:
+                raise ValueError(
+                    f"{name} aparece em {owners[name]} e {task['id']}; cada arquivo pertence a uma só tarefa da "
+                    "frente: junte as tarefas ou declare dependência e divida os arquivos"
+                )
+            owners[name] = task["id"]
     local_ids = {task["id"] for task in tasks}
     for task in tasks:
         if any(dep not in local_ids for dep in task["depends_on"]):
@@ -301,7 +392,7 @@ def _parse_listas(raw: str, keys: tuple[str, ...], label: str, owner: str) -> di
     return answer
 
 
-def _parse_fechamento(raw: str, front_id: str) -> dict[str, Any]:
+def _parse_fechamento(raw: str, front_id: str, expected: dict[str, list[str]] | None = None) -> dict[str, Any]:
     closure = _normalizar_textos(
         _strict_json(raw, {"assignments", "interfaces", "questions"}, f"fechamento de {front_id}"),
         ("interfaces", "questions"),
@@ -317,6 +408,13 @@ def _parse_fechamento(raw: str, front_id: str) -> dict[str, Any]:
         for a in closure["assignments"]
     ):
         raise ValueError(f"assignments inválidos no fechamento de {front_id}")
+    ids = [a["task_id"] for a in closure["assignments"]]
+    actual = {a["task_id"]: sorted(a["files"]) for a in closure["assignments"]}
+    if expected is not None and (len(ids) != len(set(ids)) or actual != expected):
+        raise ValueError(
+            f"fechamento de {front_id} precisa repetir cada tarefa do plano uma vez, com os mesmos arquivos: "
+            + json.dumps(expected, ensure_ascii=False)
+        )
     _lista_texto(closure, "interfaces", front_id)
     _lista_texto(closure, "questions", front_id)
     return closure
@@ -706,6 +804,7 @@ def _resume_with_answers(state: dict[str, Any], answers: Any) -> None:
         "build",
         "audit",
         "chief_review",
+        "continue",
     }:
         raise ValueError("esta pausa não aceita respostas; ajuste o manifesto ou inicie uma nova iniciativa")
     if not isinstance(answers, dict) or set(answers) != {"answers"} or not isinstance(answers["answers"], list):
@@ -720,21 +819,42 @@ def _resume_with_answers(state: dict[str, Any], answers: Any) -> None:
         if question in provided:
             raise ValueError(f"resposta duplicada para a pergunta: {question}")
         provided[question] = answer.strip()
-    if set(provided) != set(questions):
+    if questions and set(provided) != set(questions):
         raise ValueError("responda exatamente todas as perguntas pendentes, sem omitir nem acrescentar perguntas")
+    # Sem perguntas, a resposta opcional orienta os bloqueios da pausa (por exemplo, conflitos de alinhamento).
+    if not questions and not set(provided) <= set(state.get("blockers", [])):
+        raise ValueError("sem perguntas pendentes, cada question precisa repetir um dos blockers da pausa")
+    answered = list(questions) or list(provided)
     key = _checkpoint_key(checkpoint)
     state.setdefault("resolutions", {}).setdefault(key, []).extend(
-        {"question": q, "answer": provided[q]} for q in questions
+        {"question": q, "answer": provided[q]} for q in answered
     )
     state.setdefault("human_decisions", []).extend(
-        {"checkpoint": key, "question": q, "answer": provided[q]} for q in questions
+        {"checkpoint": key, "question": q, "answer": provided[q]} for q in answered
     )
     stage, front_id, task_id = checkpoint["stage"], checkpoint["front_id"], checkpoint.get("task_id", "")
-    artifact = {"plan": "plans", "agreement": "agreements", "closure": "closures", "audit": "audits"}.get(stage)
-    if artifact:
-        state.get(artifact, {}).pop(front_id, None)
-        if stage == "plan":
-            state.get("models", {}).pop(f"supervisor:{front_id}", None)
+    if stage in {"plan", "agreement"}:
+        # Resposta no plano ou no alinhamento pode mudar critério de aceite ou escopo: o plano é refeito e
+        # o alinhamento de todas as frentes também, porque compara planos.
+        targets = list(state.get("plans", {})) if front_id == "global" else [front_id]
+        state.setdefault("replans", []).append(
+            {
+                "checkpoint": key,
+                "reason": state.get("motivo"),
+                "blockers": state.get("blockers", []),
+                "previous_plans": {fid: state["plans"][fid] for fid in targets if fid in state.get("plans", {})},
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        for fid in targets:
+            for artifact in ("plans", "consultations", "closures"):
+                state.get(artifact, {}).pop(fid, None)
+            state.get("models", {}).pop(f"supervisor:{fid}", None)
+            if not any(name.startswith(fid + ":") for name in state.get("builds", {})):
+                state.get("initial_paths", {}).pop(fid, None)
+        state.get("agreements", {}).clear()
+    elif stage in {"closure", "audit"}:
+        state.get({"closure": "closures", "audit": "audits"}[stage], {}).pop(front_id, None)
     elif stage == "consultation":
         state.get("consultations", {}).get(front_id, {}).pop(task_id, None)
     elif stage == "build":
@@ -755,9 +875,55 @@ def _decision_context(state: dict[str, Any], checkpoint: dict[str, str]) -> str:
     return "\nDECISÕES HUMANAS PARA ESTA ETAPA:\n" + json.dumps(decisions, ensure_ascii=False)
 
 
+def _checkpoint_legado(state: dict[str, Any]) -> dict[str, str] | None:
+    """Pausas gravadas sem etapa (até a 5.1.2): deduz pelo motivo onde a retomada recomeça."""
+    reason = state.get("motivo") or ""
+    if reason.startswith(("conflitos de supervisores", "conflito de arquivos entre frentes")):
+        return {"stage": "plan", "front_id": "global"}
+    collision = re.match(r"colisão de arquivo dentro da frente: ([^:]+):", reason)
+    if collision:
+        return {"stage": "plan", "front_id": collision.group(1)}
+    if reason.startswith(
+        (
+            "auditoria de supervisor reprovada",
+            "max_agents insuficiente",
+            "max_builders_per_supervisor excedido",
+            "arquivos atribuídos já tinham alterações",
+            "construtores alteraram arquivos fora do escopo",
+            "fechamento ",
+        )
+    ):
+        return {"stage": "continue", "front_id": "global"}
+    return None
+
+
+def _decisoes_do_plano(state: dict[str, Any], front_id: str) -> str:
+    """Decisões humanas e motivo de replanejamento que o plano da frente precisa incorporar."""
+    decisions = [
+        item
+        for item in state.get("human_decisions", [])
+        if item.get("checkpoint", "").split(":")[0] in {"plan", "agreement"}
+        and item.get("checkpoint", "").split(":")[1:2] in (["global"], [front_id])
+    ]
+    text = ""
+    if decisions:
+        text += "\nDECISÕES HUMANAS QUE O PLANO DEVE INCORPORAR, inclusive em acceptance e files:\n" + json.dumps(
+            decisions, ensure_ascii=False
+        )
+    replans = [item for item in state.get("replans", []) if front_id in item.get("previous_plans", {})]
+    if replans:
+        last = replans[-1]
+        text += "\nREPLANEJAMENTO (revise o plano anterior em vez de recomeçar):\n" + json.dumps(
+            {"reason": last["reason"], "blockers": last["blockers"], "previous_plan": last["previous_plans"][front_id]},
+            ensure_ascii=False,
+        )
+    return text
+
+
 def _minimum_remaining_calls(state: dict[str, Any], fronts: list[dict[str, Any]]) -> int:
     needed = sum(front["id"] not in state.get("plans", {}) for front in fronts)
-    needed += sum(front["id"] not in state.get("agreements", {}) for front in fronts)
+    if len(fronts) > 1:  # frente única não tem alinhamento
+        needed += sum(front["id"] not in state.get("agreements", {}) for front in fronts)
     for front in fronts:
         plan = state.get("plans", {}).get(front["id"], {})
         for task in plan.get("tasks", []):
@@ -806,6 +972,7 @@ def _apply_chief_decision(state: dict[str, Any], decision: Any, fronts: list[dic
         )
         state["estado"] = "concluida"
         state["motivo"] = None
+        state.pop("blockers", None)
         return
     if action == "ask_human":
         if set(decision) != {"decision", "questions"}:
@@ -859,7 +1026,9 @@ def _apply_chief_decision(state: dict[str, Any], decision: Any, fronts: list[dic
                 "Reexecute porque uma tarefa dependente foi revisada pelo chefe; confira as dependências atualizadas."
             )
     for front_id in changed_fronts:
-        state.get("audits", {}).pop(front_id, None)
+        audit = state.get("audits", {}).pop(front_id, None)
+        if audit is not None:
+            state.setdefault("audit_history", []).append({"front_id": front_id, **audit})
     state.setdefault("chief_reviews", []).append(
         {
             "decision": action,
@@ -870,6 +1039,7 @@ def _apply_chief_decision(state: dict[str, Any], decision: Any, fronts: list[dic
     )
     state["estado"] = "em_andamento"
     state["motivo"] = None
+    state.pop("blockers", None)
 
 
 def manifesto_salvo(root: Path, initiative_id: str) -> dict[str, Any]:
@@ -919,6 +1089,8 @@ async def executar_iniciativa(
     state_dir = root / ".init-harness" / "state" / "orquestracao" / initiative
     state_file = state_dir / "estado.json"
     manifest_copy = state_dir / "manifesto.json"
+    planned = json.loads(state_file.read_text(encoding="utf-8")).get("plans", {}) if state_file.exists() else {}
+    preflight = {f["id"]: _preflight(repos[f["id"]], f, fronts) for f in fronts if f["id"] not in planned}
     if state_file.exists():
         state = json.loads(state_file.read_text(encoding="utf-8"))
         # Estados anteriores guardam a impressão digital do manifesto inteiro; os novos deixam limits de fora.
@@ -933,6 +1105,10 @@ async def executar_iniciativa(
             _save(state_file, state)
         _copiar_manifesto(manifest_copy, manifest)
         if state.get("estado") == "pausada":
+            if not state.get("pending_checkpoint") and (retomar or answers is not None):
+                legacy = _checkpoint_legado(state)
+                if legacy:
+                    state["pending_checkpoint"] = legacy
             if answers is None and retomar and not state.get("questions"):
                 if not state.get("pending_checkpoint"):
                     raise ValueError(
@@ -1033,6 +1209,12 @@ async def executar_iniciativa(
             raise ValueError("--decisao-chefe requer iniciativa aguardando auditoria do chefe")
         _save(state_file, state)
         _copiar_manifesto(manifest_copy, manifest)
+    for front in fronts:  # frentes cujo plano a retomada descartou passam de novo pelo preflight
+        if front["id"] not in state["plans"] and front["id"] not in preflight:
+            preflight[front["id"]] = _preflight(repos[front["id"]], front, fronts)
+    for front_id, warnings in preflight.items():
+        state.setdefault("preflight", {})[front_id] = warnings
+    _save(state_file, state)
     semaphore = asyncio.Semaphore(limits["max_parallel"])
     supervisor_count = len(fronts)
     if supervisor_count > limits["max_agents"]:
@@ -1114,13 +1296,21 @@ async def executar_iniciativa(
             + ". "
             + LISTAS_DE_TEXTO
             + CAMINHOS_EXPLICITOS
+            + REGRA_ESCOPO
+            + "Cada arquivo pertence a uma só tarefa da frente. "
             + "pair_with declara pares recíprocos para uma única rodada consultiva pré-escrita.\nESPECIALIDADE:\n"
             + specialty
             + "\nFRONT:\n"
             + json.dumps(front, ensure_ascii=False)
+            + (
+                "\nAVISOS DO PREFLIGHT (determinísticos, sem resposta humana):\n"
+                + json.dumps(state["preflight"][front["id"]], ensure_ascii=False)
+                if state.get("preflight", {}).get(front["id"])
+                else ""
+            )
             + "\nSPEC:\n"
             + spec_text
-            + _decision_context(state, checkpoint)
+            + _decisoes_do_plano(state, front["id"])
         )
         plan, model = await call_json(
             "supervisor",
@@ -1147,26 +1337,48 @@ async def executar_iniciativa(
             "limits.max_calls no manifesto e rode de novo com --iniciativa"
         )
     tasks_all = [(f, t) for f in fronts for t in state["plans"][f["id"]]["tasks"]]
+    # Pausas resolvidas fora do runner (limits, commit) retomam do ponto em que pararam.
+    proceed = {"stage": "continue", "front_id": "global"}
     if supervisor_count + len(tasks_all) > limits["max_agents"]:
-        return _persist_pause(state_file, state, "max_agents insuficiente para supervisores e construtores planejados")
+        return _persist_pause(
+            state_file,
+            state,
+            "max_agents insuficiente para supervisores e construtores planejados; aumente limits e use --retomar",
+            checkpoint=proceed,
+        )
     if any(
         sum(1 for f, _ in tasks_all if f["id"] == front["id"]) > limits["max_builders_per_supervisor"]
         for front in fronts
     ):
-        return _persist_pause(state_file, state, "max_builders_per_supervisor excedido")
+        return _persist_pause(
+            state_file,
+            state,
+            "max_builders_per_supervisor excedido; aumente limits e use --retomar",
+            checkpoint=proceed,
+        )
     ownership: dict[tuple[str, str], str] = {}
     for front, task in tasks_all:
         for file in task["files"]:
             key = (front["id"], file)
             if key in ownership:
-                return _persist_pause(state_file, state, f"colisão de arquivo dentro da frente: {front['id']}:{file}")
+                return _persist_pause(
+                    state_file,
+                    state,
+                    f"colisão de arquivo dentro da frente: {front['id']}:{file}",
+                    checkpoint={"stage": "plan", "front_id": front["id"]},
+                )
             ownership[key] = task["id"]
     cross: dict[tuple[str, str], str] = {}
     for front, task in tasks_all:
         for file in task["files"]:
             key = (str(repos[front["id"]]), file)
             if key in cross and cross[key] != front["id"]:
-                return _persist_pause(state_file, state, f"conflito de arquivos entre frentes: {file}")
+                return _persist_pause(
+                    state_file,
+                    state,
+                    f"conflito de arquivos entre frentes: {file}",
+                    checkpoint={"stage": "plan", "front_id": "global"},
+                )
             cross[key] = front["id"]
 
     state.setdefault("initial_paths", {})
@@ -1181,7 +1393,9 @@ async def executar_iniciativa(
             return _persist_pause(
                 state_file,
                 state,
-                f"arquivos atribuídos já tinham alterações antes da escrita em {front['id']}: {overlap}",
+                f"arquivos atribuídos já tinham alterações antes da escrita em {front['id']}: {overlap}; "
+                "faça commit ou stash e use --retomar",
+                checkpoint=proceed,
             )
         state["initial_paths"].setdefault(front["id"], sorted(dirty))
         assigned_by_front[front["id"]] = assigned
@@ -1191,6 +1405,15 @@ async def executar_iniciativa(
     all_plans = {f["id"]: state["plans"][f["id"]] for f in fronts}
     for front in fronts:
         if front["id"] in state["agreements"]:
+            continue
+        if len(fronts) == 1:
+            state["agreements"][front["id"]] = {
+                "agreements": [],
+                "conflicts": [],
+                "questions": [],
+                "skipped": "frente única: não há planos pares para alinhar",
+            }
+            _save(state_file, state)
             continue
         checkpoint = {"stage": "agreement", "front_id": front["id"]}
         specialty = _specialty_prompt(root, repos[front["id"]], front["specialty"])
@@ -1227,7 +1450,12 @@ async def executar_iniciativa(
             )
         if answer["conflicts"]:
             return _persist_pause(
-                state_file, state, "conflitos de supervisores bloqueiam o despacho", blockers=answer["conflicts"]
+                state_file,
+                state,
+                "conflitos de supervisores bloqueiam o despacho; ajuste a spec ou responda aos blockers e use "
+                "--retomar, que refaz planos e alinhamento",
+                checkpoint={"stage": "plan", "front_id": "global"},
+                blockers=answer["conflicts"],
             )
 
     # Consulta curta entre pares: uma rodada, sem escrita; o supervisor fecha assignments.
@@ -1303,22 +1531,16 @@ async def executar_iniciativa(
             + json.dumps(state["consultations"].get(front["id"], {}), ensure_ascii=False)
             + _decision_context(state, checkpoint)
         )
+        expected = {t["id"]: sorted(t["files"]) for t in tasks_by_front[front["id"]]}
         closure, _ = await call_json(
             "supervisor",
             prompt,
             f"closure:{front['id']}",
             repos[front["id"]],
-            lambda raw, front=front: _parse_fechamento(raw, front["id"]),
+            lambda raw, front=front, expected=expected: _parse_fechamento(raw, front["id"], expected),
             FORMATO_FECHAMENTO,
             "closure",
         )
-        expected = {t["id"]: sorted(t["files"]) for t in tasks_by_front[front["id"]]}
-        assignment_ids = [a["task_id"] for a in closure["assignments"]]
-        if len(assignment_ids) != len(set(assignment_ids)):
-            return _persist_pause(state_file, state, f"fechamento duplicou task_id em {front['id']}")
-        actual = {a["task_id"]: sorted(a["files"]) for a in closure["assignments"]}
-        if actual != expected:
-            return _persist_pause(state_file, state, f"fechamento alterou assignments/arquivos em {front['id']}")
         state["closures"][front["id"]] = closure
         _save(state_file, state)
         if closure["questions"]:
@@ -1511,10 +1733,18 @@ async def executar_iniciativa(
     # Detecta alterações fora da lista declarada; permissões do CLI não isolam por arquivo.
     for front in fronts:
         new_paths = _changed_files(repos[front["id"]], ignored) - set(state["initial_paths"][front["id"]])
-        unexpected = sorted(new_paths - assigned_by_front[front["id"]])
+        # Frentes no mesmo repositório veem os arquivos umas das outras no git status.
+        assigned_in_repo = set().union(
+            *(assigned_by_front[other["id"]] for other in fronts if repos[other["id"]] == repos[front["id"]])
+        )
+        unexpected = sorted(new_paths - assigned_in_repo)
         if unexpected:
             return _persist_pause(
-                state_file, state, f"construtores alteraram arquivos fora do escopo em {front['id']}: {unexpected}"
+                state_file,
+                state,
+                f"construtores alteraram arquivos fora do escopo em {front['id']}: {unexpected}; "
+                "reverta-os e use --retomar",
+                checkpoint={"stage": "continue", "front_id": "global"},
             )
 
     # Supervisor audita somente diff/evidências; não executa testes.
@@ -1524,15 +1754,34 @@ async def executar_iniciativa(
         checkpoint = {"stage": "audit", "front_id": front["id"]}
         repo = repos[front["id"]]
         specialty = _specialty_prompt(root, repo, front["specialty"])
-        diff = _change_context(repo, front["scope"])
+        task_paths = sorted(assigned_by_front[front["id"]]) or front["scope"]
+        diff = _change_context(repo, task_paths)
         spec_text = (repos[front["id"]] / front["spec"]).read_text(encoding="utf-8")
+        previous = [item for item in state.get("audit_history", []) if item.get("front_id") == front["id"]]
+        revisions = {
+            key: text for key, text in state.get("chief_revisions", {}).items() if key.startswith(front["id"] + ":")
+        }
         prompt = (
             "PAPEL: supervisor auditor read-only. Audite a spec e o diff local desta frente. Não rode testes. "
             "Responda JSON estrito "
             + FORMATO_AUDITORIA
             + ". "
             + LISTAS_DE_TEXTO
-            + "Não alegue validações não observadas.\nESPECIALIDADE:\n"
+            + "Não alegue validações não observadas. O DIFF abaixo já é o da tarefa, filtrado pelo runner: não "
+            "use git status nem git diff crus para decidir o que a iniciativa mudou, e não pergunte sobre "
+            "arquivos fora dele.\nARQUIVOS DA INICIATIVA NESTA FRENTE:\n"
+            + json.dumps(task_paths, ensure_ascii=False)
+            + "\nFORA DO DIFF DA TAREFA (saídas do ambiente, padrão e caminhos_ignorados):\n"
+            + json.dumps(list(ignored), ensure_ascii=False)
+            + "\nJÁ ALTERADOS ANTES DA INICIATIVA (não são desta tarefa):\n"
+            + json.dumps(state["initial_paths"].get(front["id"], []), ensure_ascii=False)
+            + (
+                "\nAUDITORIAS ANTERIORES E REVISÕES DO CHEFE (confira se os achados foram resolvidos):\n"
+                + json.dumps({"audits": previous, "chief_revisions": revisions}, ensure_ascii=False)
+                if previous
+                else ""
+            )
+            + "\nESPECIALIDADE:\n"
             + specialty
             + "\nSPEC ("
             + front["spec"]
@@ -1549,7 +1798,7 @@ async def executar_iniciativa(
             + "\nGATES (varredura determinística; para cada trecho lido, decida se o afrouxamento silencia "
             "a falha que o gate pegava ou se o diff mostra medição ou decisão que o justifique; "
             "sem justificativa visível, registre em findings):\n"
-            + _gate_scan(root, repo, front["scope"])[-20000:]
+            + _gate_scan(root, repo, task_paths)[-20000:]
             + _decision_context(state, checkpoint)
         )
         audit, _ = await call_json(
@@ -1565,15 +1814,18 @@ async def executar_iniciativa(
         _save(state_file, state)
         if audit["questions"]:
             return _persist_pause(state_file, state, "perguntas humanas na auditoria", audit["questions"], checkpoint)
-        if not audit["approved"]:
-            return _persist_pause(
-                state_file,
-                state,
-                "auditoria de supervisor reprovada; requer correção/reexecução",
-                blockers=audit["findings"],
-            )
+    # Auditoria reprovada vai ao chefe, que decide revise com os achados, approve justificado ou ask_human.
+    rejected = [front["id"] for front in fronts if not state["audits"][front["id"]]["approved"]]
     state["estado"] = "aguardando_auditoria_chefe"
-    state["motivo"] = None
+    state["motivo"] = (
+        f"auditoria de supervisor reprovada em {rejected}; o chefe decide revise com os achados, approve "
+        "justificado ou ask_human"
+        if rejected
+        else None
+    )
+    state.pop("blockers", None)
+    if rejected:
+        state["blockers"] = [f"{fid}: {item}" for fid in rejected for item in state["audits"][fid]["findings"]]
     _save(state_file, state)
     report_file = state_dir / "relatorio_para_chefe.json"
     report = {
@@ -1592,7 +1844,15 @@ async def executar_iniciativa(
         )
     }
     report["chefe_auditoria"] = "pendente; chefe deve inspecionar o diff fora do runner, sem executar testes"
-    report["gates"] = {front["id"]: _gate_scan(root, repos[front["id"]], front["scope"]) for front in fronts}
+    if rejected:
+        report["auditorias_reprovadas"] = rejected
+        report["motivo"] = state["motivo"]
+        report["blockers"] = state["blockers"]
+    report["preflight"] = state.get("preflight", {})
+    report["gates"] = {
+        front["id"]: _gate_scan(root, repos[front["id"]], sorted(assigned_by_front[front["id"]]) or front["scope"])
+        for front in fronts
+    }
     report_file.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     return report
 

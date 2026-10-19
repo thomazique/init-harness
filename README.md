@@ -1,10 +1,16 @@
-# init-harness 5.1.2
+# init-harness 5.1.3
 
 `init-harness` instala e atualiza uma base operacional para trabalhar com agentes de IA em
 repositórios Git. Mantém protocolo e contexto do projeto em arquivos versionáveis, registra
 o andamento entre sessões, conecta memória local e grafo de código, e adiciona skills e
 guardrails ao fluxo de trabalho. O harness serve a projetos diferentes: preserva os arquivos
 do projeto e adapta suas instruções ao código e às ferramentas existentes.
+
+A versão **5.1.3** dá retomada a toda pausa da orquestração. Conflito entre supervisores, colisão de
+arquivo e resposta humana no alinhamento refazem o plano com a decisão, e auditoria reprovada vai ao
+chefe. Um preflight sem modelo confere `base_commit` e `files` da spec antes da primeira chamada,
+e frente única pula o alinhamento. O `memory.py briefing` funciona sem índice e o runner escreve
+UTF-8 no console do Windows.
 
 A versão **5.1.2** destrava a orquestração com Codex: o runner passa a política de aprovação
 pela configuração (o `codex exec` atual recusa `--ask-for-approval`), entrega um JSON Schema por

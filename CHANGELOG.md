@@ -1,5 +1,27 @@
 # Changelog
 
+## 5.1.3 — retomada de toda pausa, preflight e frente única
+
+Correções vindas da frente de segurança de um projeto com supervisor e construtor Codex no Windows: a frente terminou aprovada, mas precisou de 4 iniciativas porque três pausas não tinham retomada, e mais da metade das chamadas foi para pausas de metadado ou de pergunta derivável da spec.
+
+### Corrigido
+
+- Conflito entre supervisores, colisão de arquivo dentro da frente e conflito de arquivos entre frentes pausavam sem `pending_checkpoint`, e `--retomar` mandava abrir outra iniciativa. Agora voltam ao plano: `--retomar` refaz os planos afetados lendo a spec atual e refaz o alinhamento. Com `--respostas`, cada resposta repete um item de `blockers` e vai ao novo plano.
+- Resposta humana no alinhamento só refazia o alinhamento, que acusava conflito com o plano antigo. Agora refaz o plano da frente com as decisões humanas e o plano anterior no prompt, e depois o alinhamento de todas as frentes.
+- Auditoria de supervisor reprovada pausava sem caminho de volta. Agora todas as frentes são auditadas e a iniciativa vai para `aguardando_auditoria_chefe` com `auditorias_reprovadas` e os achados em `blockers`. O chefe usa `revise` com os achados para reconstruir e reauditar; a reauditoria recebe as auditorias anteriores e as revisões.
+- Limites excedidos, arquivos atribuídos que já tinham alterações e arquivos fora do escopo no fim da construção também ganham retomada, do ponto em que pararam.
+- Pausas gravadas pela 5.1.2 sem etapa recebem uma pelo motivo quando retomadas, então as iniciativas já pausadas não precisam ser refeitas.
+- Com duas frentes no mesmo repositório, a conferência final acusava os arquivos da outra frente como fora do escopo.
+- A auditoria via `graphify-out/` como diff da tarefa. O prompt agora lista os arquivos da iniciativa, os caminhos ignorados (padrão e `caminhos_ignorados`) e os arquivos já alterados antes da iniciativa, e diz para não usar `git status` cru. O diff e a varredura de gates cobrem só os arquivos atribuídos.
+- `memory.py briefing` falhava com `unable to open database file` no worktree temporário ou em sandbox somente leitura. Agora imprime o contexto do Markdown e avisa que o índice está indisponível.
+- O runner (`invocar_agentes.py`) e os CLIs de evolução de skills quebravam com `'charmap' codec can't encode` ao imprimir JSON em console cp1252. Agora forçam UTF-8 como os hooks.
+
+### Adicionado
+
+- Preflight determinístico antes da primeira chamada. Recusa sem criar estado quando o `base_commit` da spec difere do manifesto ou quando `files` da spec tem glob, seta ou path fora do scope. Arquivo da frente fora do scope vira aviso no prompt do plano e em `preflight` do relatório. O prompt do plano diz que o scope do manifesto prevalece sobre o texto da spec e da frente e que esses metadados não são motivo de pergunta.
+- Com uma frente só, o alinhamento é pulado sem chamada; o mínimo de `max_calls` cai para 3 por frente mais os construtores.
+- Mesmo arquivo em duas tarefas da frente e fechamento que muda tarefas ou arquivos do plano viram erro de formato com reparo gratuito, em vez de pausa.
+
 ## 5.1.2 — orquestração com Codex, reparo de formato e retomada
 
 Correções vindas de uma execução real no Windows com supervisor e construtor Codex, em que duas iniciativas e 14 chamadas terminaram sem nada integrado.

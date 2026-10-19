@@ -20,6 +20,16 @@ from iniciativa_runtime import executar_iniciativa, manifesto_salvo
 RACIOCINIOS = {"low", "medium", "high", "xhigh"}
 
 
+def forcar_utf8() -> None:
+    """Mesmo comportamento de _lib.forcar_utf8: console Windows em cp1252 não quebra a saída JSON."""
+    for fluxo in (sys.stdin, sys.stdout, sys.stderr):
+        if hasattr(fluxo, "reconfigure"):
+            try:
+                fluxo.reconfigure(encoding="utf-8")
+            except (OSError, ValueError):  # gate-ok: melhor esforço; sem ele a saída segue na codificação local
+                pass
+
+
 def ler_config(raiz: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     caminho = raiz / ".init-harness" / "orquestracao.json"
     caminho_geral = raiz / ".init-harness" / "config.json"
@@ -274,6 +284,7 @@ async def executar_lote(raiz: Path, lote: dict[str, Any]) -> dict[str, Any]:
 
 
 def main() -> int:
+    forcar_utf8()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path.cwd(), help="raiz do projeto instalado")
     grupo = parser.add_mutually_exclusive_group(required=True)
