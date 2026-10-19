@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from iniciativa_runtime import executar_iniciativa
+from iniciativa_runtime import executar_iniciativa, manifesto_salvo
 
 # Mesmo enum de `raciocinio` em .init-harness/schema/orquestracao.schema.json; vale para `--effort` (Claude)
 # e `model_reasoning_effort` (Codex).
@@ -89,7 +89,7 @@ def reservar_chamadas(
         conexao.commit()
 
 
-def comando_para(provedor: str, agente: dict[str, Any]) -> list[str]:
+def comando_para(provedor: str, agente: dict[str, Any], esquema: Path | None = None) -> list[str]:
     executavel = "claude" if provedor == "claude" else "codex"
     caminho_executavel = shutil.which(executavel)
     if not caminho_executavel:
@@ -136,13 +136,16 @@ def comando_para(provedor: str, agente: dict[str, Any]) -> list[str]:
         agente["modelo"],
         "--sandbox",
         sandbox,
-        "--ask-for-approval",
-        "never",
+        # `codex exec` não aceita mais --ask-for-approval (0.163+); a política vai pela configuração.
+        "--config",
+        'approval_policy="never"',
         "--config",
         "mcp_servers={}",
     ]
     if raciocinio:
         comando.extend(["--config", f'model_reasoning_effort="{raciocinio}"'])
+    if esquema is not None:
+        comando.extend(["--output-schema", str(esquema)])
     comando.append("-")
     return comando
 
@@ -275,6 +278,11 @@ def main() -> int:
     parser.add_argument("--root", type=Path, default=Path.cwd(), help="raiz do projeto instalado")
     grupo = parser.add_mutually_exclusive_group(required=True)
     grupo.add_argument("--iniciativa", type=Path, help="manifesto JSON para orquestração hierárquica")
+    grupo.add_argument(
+        "--retomar",
+        metavar="INITIATIVE_ID",
+        help="retoma pelo manifesto copiado no estado; sem perguntas pendentes, refaz a etapa pausada",
+    )
     grupo.add_argument("--lote", type=Path, help="JSON de tarefas e prompts; não é copiado ao log")
     retomada = parser.add_mutually_exclusive_group()
     retomada.add_argument("--respostas", type=Path, help="JSON com respostas humanas para retomar iniciativa pausada")
@@ -285,24 +293,30 @@ def main() -> int:
     args = parser.parse_args()
     raiz = args.root.resolve()
     try:
-        if args.iniciativa:
+        if args.iniciativa or args.retomar:
             if args.remover_lote:
                 raise ValueError("--remover-lote só pode ser usado com --lote")
-            manifesto = json.loads(args.iniciativa.resolve().read_text(encoding="utf-8"))
+            manifesto = (
+                json.loads(args.iniciativa.resolve().read_text(encoding="utf-8"))
+                if args.iniciativa
+                else manifesto_salvo(raiz, args.retomar)
+            )
             if not isinstance(manifesto, dict):
                 raise ValueError("o manifesto de iniciativa precisa conter um objeto JSON")
             respostas = json.loads(args.respostas.resolve().read_text(encoding="utf-8")) if args.respostas else None
             decisao = (
                 json.loads(args.decisao_chefe.resolve().read_text(encoding="utf-8")) if args.decisao_chefe else None
             )
-            resultado = asyncio.run(executar_iniciativa(raiz, manifesto, respostas, decisao))
+            resultado = asyncio.run(
+                executar_iniciativa(raiz, manifesto, respostas, decisao, retomar=bool(args.retomar))
+            )
             print(json.dumps(resultado, ensure_ascii=False, indent=2))
             return 0 if resultado.get("estado") in {"aguardando_auditoria_chefe", "concluida"} else 1
 
         if args.respostas:
-            raise ValueError("--respostas só pode ser usado com --iniciativa")
+            raise ValueError("--respostas só pode ser usado com --iniciativa ou --retomar")
         if args.decisao_chefe:
-            raise ValueError("--decisao-chefe só pode ser usado com --iniciativa")
+            raise ValueError("--decisao-chefe só pode ser usado com --iniciativa ou --retomar")
         caminho_lote = args.lote.resolve()
         lote = json.loads(caminho_lote.read_text(encoding="utf-8"))
         if args.remover_lote:

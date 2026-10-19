@@ -157,7 +157,18 @@ ESTRUTURAIS = [
 # ---------------------------------------------------------------- entrada/saída
 
 
+def forcar_utf8() -> None:
+    """No Windows o console usa a página de código local; o Claude Code lê e escreve UTF-8 nos hooks."""
+    for fluxo in (sys.stdin, sys.stdout, sys.stderr):
+        if hasattr(fluxo, "reconfigure"):
+            try:
+                fluxo.reconfigure(encoding="utf-8")
+            except (OSError, ValueError):  # gate-ok: melhor esforço; sem ele o hook segue na codificação local
+                pass
+
+
 def ler_entrada() -> dict:
+    forcar_utf8()
     try:
         return json.load(sys.stdin)
     except Exception:
@@ -165,6 +176,7 @@ def ler_entrada() -> dict:
 
 
 def emitir(obj: dict) -> None:
+    forcar_utf8()
     sys.stdout.write(json.dumps(obj, ensure_ascii=False))
     sys.stdout.flush()
 

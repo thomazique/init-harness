@@ -18,7 +18,7 @@ Se a sessão fez mais do que a tarefa original, a mensagem reflete o diff real, 
 2. O commit do checkpoint inclui as atualizações de `docs/ai/` e `specs/` desse checkpoint.
 3. Modo `cliente` (`.init-harness/config.json`): `INIT-HARNESS.md` e as skills de método **nunca** em stage.
 4. Não usar `--no-verify`. Pre-commit falhou: corrigir a causa ou reportar ao usuário.
-5. Aviso de gate do pre-commit (`gate RH-...`): ler o trecho com `python .claude/hooks/gate_diff.py --staged`. Afrouxamento sem justificativa volta atrás; mantido só por decisão humana, com o motivo na mensagem.
+5. Aviso de gate do pre-commit (`gate RH-...`): ler o trecho com `python .claude/hooks/gate_diff.py --staged`. Afrouxamento sem justificativa volta atrás; mantido só por decisão humana, com o motivo na mensagem e, quando for permanente, `gate-ok: <motivo>` na própria linha.
 
 ---
 

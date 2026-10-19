@@ -58,18 +58,20 @@ Uma iniciativa hierárquica usa o contrato versão 1, descrito como `$defs.manif
 
 Os limites são globais à iniciativa: `max_parallel` limita agentes simultâneos, `max_agents` limita agentes alocados, `max_calls` limita chamadas planejadas e `max_builders_per_supervisor` limita construtores por supervisor. Respeite também limites menores do cliente e do perfil. Não interprete esses valores como limite financeiro nem como capacidade implementada pelo runner.
 
+Dimensione `max_calls` pelo mínimo do fluxo: 4 chamadas por frente (plano, alinhamento, fechamento e auditoria), mais 1 por tarefa de construtor e 1 por tarefa com `pair_with`, mais folga de cerca de 50% para retomadas depois de perguntas humanas, que refazem a etapa pausada. Uma frente com 2 construtores precisa de pelo menos 6; use 10. O `limite_chamadas_cli_por_atividade` de `orquestracao.json` vale só para `--lote`. Depois dos planos, o runner confere se `max_calls` cobre o restante e para com a conta antes de gastar chamadas. Mudar só `limits` no manifesto não troca a identidade da iniciativa: aumente o valor e rode de novo com `--iniciativa`.
+
 O formato antigo de lote com `frente_id`, `perfil`, `papel` (`executor` ou `auditor`) e `tarefas[].prompt` continua compatível com `--lote`. Use-o para os papéis legados suportados; não envie papéis hierárquicos novos ao runner como se ele os aceitasse. Para esses papéis, siga as instruções e os recursos de agentes disponíveis no cliente.
 
 ## Fases da iniciativa
 
-1. **Preparação pelo chefe.** Registre `HEAD`, branch e `git status`; não atribua arquivos que já estavam alterados sem autorização explícita. Leia as specs de todas as frentes, identifique dependências e faça uma manifestação com `initiative_id`, `profile`, limites globais e os campos exigidos em cada frente. Persista o estado operacional em `.init-harness/state/orquestracao/<initiative_id>/`. Registre estado, identificadores, planos e resumos; prompts e respostas completas dos agentes não são gravados. Respostas humanas de checkpoint são preservadas no estado local para permitir retomada.
+1. **Preparação pelo chefe.** Registre `HEAD`, branch e `git status`; não atribua arquivos que já estavam alterados sem autorização explícita. Leia as specs de todas as frentes, identifique dependências e faça uma manifestação com `initiative_id`, `profile`, limites globais e os campos exigidos em cada frente. Persista o estado operacional em `.init-harness/state/orquestracao/<initiative_id>/`. Registre estado, identificadores, planos e resumos; prompts e respostas completas dos agentes não são gravados; de resposta reprovada na validação fica só um trecho truncado. Respostas humanas de checkpoint são preservadas no estado local para permitir retomada.
 2. **Planejamento pelos supervisores.** Envie a cada supervisor somente a spec e o escopo de sua frente. Supervisor não edita: consulta, planeja e depois audita a própria spec. Cada um retorna JSON estrito com esta forma:
 
    ```json
    {"tasks":[{"id":"T1","objective":"...","files":["..."],"depends_on":[],"acceptance":["..."],"pair_with":["T2"]}],"interfaces":[],"questions":[]}
    ```
 
-   `pair_with` é opcional e lista pares recíprocos dentro da mesma frente. Os planos devem atribuir dono claro aos arquivos e explicitar dependências e critérios verificáveis. Se houver pergunta humana sem resposta, pause a iniciativa.
+   `pair_with` é opcional e lista pares recíprocos dentro da mesma frente. `files` contém paths explícitos de arquivo, um por item, sem glob, seta ou diretório; para mover, a tarefa declara origem e destino. Os planos devem atribuir dono claro aos arquivos e explicitar dependências e critérios verificáveis. Se houver pergunta humana sem resposta, pause a iniciativa.
 
 3. **Reconciliação entre supervisores.** Antes de iniciar qualquer construtor, compartilhe com cada supervisor os planos de todas as frentes. Cada supervisor retorna JSON estrito `{ "agreements": [], "conflicts": [], "questions": [] }`. Considere as especialidades ao identificar conflitos de contratos e implantação. Qualquer conflito bloqueia o despacho até ser resolvido.
 4. **Execução pelos construtores.** Cada tarefa executa em um worktree Git temporário próprio. O runner rejeita alterações fora dos arquivos atribuídos, confere que o repositório principal não mudou durante a construção e integra em sequência somente os arquivos autorizados. Despache apenas tarefas sem dependências pendentes e dentro dos limites globais; perguntas e bloqueios sobem ao supervisor/chefe.
@@ -83,6 +85,13 @@ Git é a fonte de verdade para alterações efetivas, branches e commits-base; o
 O construtor executa as verificações definidas pelo pedido, pela spec e pelas instruções do projeto, e reporta comando e resultado sem alegar execuções que não ocorreram. Supervisor e chefe auditam por leitura e comparação; o chefe não roda testes na auditoria final. Pergunta humana pendente, conflito de arquivo, dependência não concluída ou limite excedido impede avanço da etapa correspondente.
 
 Diálogo moderado: questões humanas podem ser retomadas com `--respostas`; decisões finais usam `--decisao-chefe` conforme `decisao_chefe` no schema.
+
+### Retomada e falhas de formato
+
+- O runner copia o manifesto para `.init-harness/state/orquestracao/<initiative_id>/manifesto.json`. `--retomar <initiative_id>` substitui `--iniciativa <arquivo>` e combina com `--respostas` e `--decisao-chefe`. Sem perguntas pendentes, `--retomar` refaz a etapa pausada, por exemplo um construtor bloqueado ou um repositório que mudou durante a construção.
+- Toda etapa pede JSON estrito, com os campos descritivos (`interfaces`, `agreements`, `conflicts`, `questions`, `acceptance`, `risks` etc.) como listas de strings. Com Codex, cada chamada recebe `--output-schema` gerado a partir de `$defs` do schema. Objetos nessas listas são convertidos em texto JSON. Quando a validação falha, o runner guarda um trecho truncado da resposta em `invalid_responses` de `estado.json` e faz um reparo de formato somente leitura, que não conta em `max_calls` (fica em `repair_calls`). Se o reparo também falhar, a execução para sem pausar e rodar de novo refaz a etapa.
+- Construtor recusado ou bloqueado deixa em `build_attempts` o motivo, os arquivos fora do escopo e o retorno (`risks`, `questions`). Ao retomar, a tentativa vai para `build_history`.
+- Saídas do ambiente não contam como mudança no repositório principal nem no worktree do construtor: `.init-harness/state/`, `.init-harness/skills/`, `graphify-out/` e `__pycache__`. Acrescente outras em `caminhos_ignorados` de `orquestracao.json`. Arquivo que o construtor relata e que o Git ignora, como cache, fica em `generated_files_ignored` e não é integrado.
 
 ## Especialidades de supervisor
 

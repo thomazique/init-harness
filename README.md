@@ -1,10 +1,16 @@
-# init-harness 5.1.1
+# init-harness 5.1.2
 
 `init-harness` instala e atualiza uma base operacional para trabalhar com agentes de IA em
 repositórios Git. Mantém protocolo e contexto do projeto em arquivos versionáveis, registra
 o andamento entre sessões, conecta memória local e grafo de código, e adiciona skills e
 guardrails ao fluxo de trabalho. O harness serve a projetos diferentes: preserva os arquivos
 do projeto e adapta suas instruções ao código e às ferramentas existentes.
+
+A versão **5.1.2** destrava a orquestração com Codex: o runner passa a política de aprovação
+pela configuração (o `codex exec` atual recusa `--ask-for-approval`), entrega um JSON Schema por
+etapa, repara uma vez sem custo as respostas fora do formato e guarda o motivo dos bloqueios.
+A iniciativa pode ser retomada só pelo `initiative_id`. Saídas do ambiente, como o `graphify-out/`,
+não interrompem mais a construção. Os hooks escrevem em UTF-8 no Windows.
 
 A versão **5.1.1** corrige o agente `auditor-pilares`, que não iniciava, aplica o
 esforço configurado (`raciocinio`) às chamadas do Claude pelo runner CLI e faz o `doctor` ignorar
@@ -93,7 +99,7 @@ O estado fica em `.init-harness/state/orquestracao/<initiative_id>/`. A retomada
 
 Perfis legados permanecem válidos: `coordenador`, `executor` e `auditor`. Os papéis `chefe`, `supervisor` e `construtor` são opcionais, com fallback para os papéis legados. Para o manifesto, os papéis efetivamente chamados precisam estar configurados em modo `cli`; os executáveis devem estar instalados e autenticados.
 
-`max_parallel`, `max_agents`, `max_calls` e `max_builders_per_supervisor` limitam o volume da iniciativa. Chamadas usam contas e cotas dos provedores selecionados; esses limites não estabelecem teto monetário. O estado JSON e as decisões humanas ficam locais; prompts e respostas completas dos agentes não são persistidos.
+`max_parallel`, `max_agents`, `max_calls` e `max_builders_per_supervisor` limitam o volume da iniciativa. Chamadas usam contas e cotas dos provedores selecionados; esses limites não estabelecem teto monetário. O estado JSON e as decisões humanas ficam locais; prompts e respostas completas dos agentes não são persistidos; de uma resposta reprovada na validação fica só um trecho truncado, para diagnóstico.
 > Estado: projeto em evolução. O harness ajuda a estruturar trabalho com IA,
 > mas não substitui revisão humana, sandbox, CI, backups ou controles de acesso.
 

@@ -19,6 +19,58 @@ from typing import Any
 
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}\Z")
 SPECIALTIES = {"frontend", "backend", "security", "deploy_cicd", "database"}
+# Saídas do próprio ambiente (estado e telemetria do kit, graphify, bytecode) não contam como mudança do projeto;
+# `caminhos_ignorados` em orquestracao.json acrescenta outras.
+IGNORADOS_PADRAO = (".init-harness/state/", ".init-harness/skills/", "graphify-out/", "*__pycache__/*", "*.pyc")
+LISTAS_DE_TEXTO = (
+    "Os campos interfaces, agreements, conflicts, questions, acceptance, suggestions, checks, risks, findings e "
+    "verification_evidence são listas de strings simples, nunca de objetos: escreva "
+    '"interfaces":["GET /api/itens devolve {id, nome}"], e não "interfaces":[{"rota":"GET /api/itens"}]. '
+)
+CAMINHOS_EXPLICITOS = (
+    "files lista paths explícitos de arquivo, relativos ao repositório e um por item, sem glob (*, **), "
+    "sem seta (->) e sem diretório. Para mover arquivo, declare o path de origem e o de destino como itens "
+    "separados da mesma tarefa. "
+)
+FORMATO_PLANO = (
+    '{"tasks":[{"id":"T1","objective":"...","files":["src/a.py"],"depends_on":[],'
+    '"acceptance":["..."],"pair_with":[]}],"interfaces":["..."],"questions":[]}'
+)
+FORMATO_ALINHAMENTO = '{"agreements":["..."],"conflicts":[],"questions":[]}'
+FORMATO_CONSULTA = '{"suggestions":["..."],"questions":[]}'
+FORMATO_FECHAMENTO = (
+    '{"assignments":[{"task_id":"T1","files":["src/a.py"],"builder_context":"..."}],"interfaces":["..."],'
+    '"questions":[]}'
+)
+FORMATO_CONSTRUTOR = (
+    '{"status":"completed","summary":"...","files_changed":["src/a.py"],"checks":["..."],"risks":[],"questions":[]}'
+)
+FORMATO_AUDITORIA = '{"approved":true,"findings":[],"questions":[],"verification_evidence":["..."]}'
+REPARO = (
+    "PAPEL: reparo de formato, somente leitura. Sua resposta anterior a esta etapa falhou na validação do runner. "
+    "Não edite arquivos nem refaça a análise: devolva a mesma resposta, corrigida só no necessário para passar na "
+    "validação, como JSON estrito no formato abaixo, sem cercas nem texto adicional. "
+    + LISTAS_DE_TEXTO
+    + CAMINHOS_EXPLICITOS
+)
+# Definições de orquestracao.schema.json passadas ao Codex via --output-schema, por etapa.
+ESQUEMAS = {
+    "plan": "plano_supervisor",
+    "agreement": "reconciliacao_supervisores",
+    "consultation": "consulta_construtor",
+    "closure": "fechamento_supervisor",
+    "build": "retorno_construtor",
+    "audit": "auditoria_supervisor",
+}
+_CHAVES_ESQUEMA = {"type", "properties", "items", "enum", "required", "additionalProperties"}
+
+
+class _TarefaRecusada(ValueError):
+    """Falha de construtor com detalhes que ficam em build_attempts."""
+
+    def __init__(self, message: str, attempt: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.attempt = attempt
 
 
 def _specialty_prompt(root: Path, repo: Path, specialty: str) -> str:
@@ -96,13 +148,81 @@ def _toposort(items: list[dict[str, Any]], id_key: str, deps_key: str) -> list[s
 
 
 def _strict_json(text: str, expected: set[str], label: str) -> dict[str, Any]:
+    fenced = re.fullmatch(r"```(?:json)?[ \t]*\r?\n(.*)\r?\n```", text.strip(), re.DOTALL)
     try:
-        value = json.loads(text)
+        value = json.loads(fenced.group(1) if fenced else text)
     except json.JSONDecodeError as exc:
         raise ValueError(f"{label} deve retornar JSON estrito, sem cercas ou texto adicional: {exc}") from exc
     if not isinstance(value, dict) or set(value) != expected:
         raise ValueError(f"formato JSON inválido em {label}; chaves esperadas: {sorted(expected)}")
     return value
+
+
+def _normalizar_textos(obj: Any, keys: tuple[str, ...]) -> Any:
+    """Serializa itens não textuais das listas descritivas; caminhos e ids continuam estritos."""
+    if isinstance(obj, dict):
+        for key in keys:
+            if isinstance(obj.get(key), list):
+                obj[key] = [x if isinstance(x, str) else json.dumps(x, ensure_ascii=False) for x in obj[key]]
+    return obj
+
+
+def _trecho(raw: str, limit: int = 4000) -> str:
+    if len(raw) <= limit:
+        return raw
+    half = limit // 2
+    return raw[:half] + f"\n[... {len(raw) - limit} caracteres omitidos ...]\n" + raw[-half:]
+
+
+def _registrar_invalida(state: dict[str, Any], state_file: Path, call_id: str, raw: str, error: Exception) -> None:
+    """Guarda um trecho truncado da resposta reprovada para diagnóstico; nunca a resposta inteira."""
+    entry: dict[str, Any] = {
+        "error": str(error)[:1000],
+        "length": len(raw),
+        "excerpt": _trecho(raw),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    position = getattr(error.__cause__, "pos", None)
+    if isinstance(position, int) and len(raw) > 4000:
+        entry["around_error"] = raw[max(0, position - 400) : position + 400]
+    state.setdefault("invalid_responses", {})[call_id] = entry
+    _save(state_file, state)
+
+
+def _esquema_estrito(node: Any, defs: dict[str, Any]) -> Any:
+    """Converte uma definição do contrato no subconjunto aceito por saída estruturada estrita."""
+    if isinstance(node, list):
+        return [_esquema_estrito(item, defs) for item in node]
+    if not isinstance(node, dict):
+        return node
+    if "$ref" in node:
+        return _esquema_estrito(defs[node["$ref"].rsplit("/", 1)[-1]], defs)
+    result = {key: _esquema_estrito(value, defs) for key, value in node.items() if key in _CHAVES_ESQUEMA}
+    if "properties" in node:
+        result["properties"] = {key: _esquema_estrito(value, defs) for key, value in node["properties"].items()}
+        result["required"] = list(node["properties"])
+        result["additionalProperties"] = False
+    if "enum" in result and "type" not in result and all(isinstance(x, str) for x in result["enum"]):
+        result["type"] = "string"
+    return result
+
+
+def _gravar_esquemas(root: Path, state_dir: Path) -> dict[str, Path]:
+    """Escreve um JSON Schema por etapa para o Codex; sem o contrato instalado, segue sem --output-schema."""
+    try:
+        contract = json.loads((root / ".init-harness/schema/orquestracao.schema.json").read_text(encoding="utf-8"))
+        defs = contract["$defs"]
+        schemas = {stage: _esquema_estrito(defs[name], defs) for stage, name in ESQUEMAS.items()}
+    except (OSError, json.JSONDecodeError, KeyError, TypeError):
+        return {}
+    folder = state_dir / "esquemas"
+    folder.mkdir(parents=True, exist_ok=True)
+    paths: dict[str, Path] = {}
+    for stage, schema in schemas.items():
+        path = folder / f"{stage}.json"
+        path.write_text(json.dumps(schema, ensure_ascii=False, indent=2), encoding="utf-8")
+        paths[stage] = path
+    return paths
 
 
 def _lista_texto(obj: dict[str, Any], key: str, label: str) -> list[str]:
@@ -116,10 +236,12 @@ def _validar_plan(front: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]
     tasks = plan.get("tasks")
     if not isinstance(tasks, list):
         raise ValueError(f"plano {front['id']} precisa conter tasks")
+    _normalizar_textos(plan, ("interfaces", "questions"))
     _lista_texto(plan, "interfaces", front["id"])
     _lista_texto(plan, "questions", front["id"])
     seen: set[str] = set()
     for task in tasks:
+        _normalizar_textos(task, ("acceptance",))
         if not isinstance(task, dict) or not isinstance(task.get("id"), str) or not _ID.fullmatch(task["id"]):
             raise ValueError(f"task com id inválido em {front['id']}")
         if task["id"] in seen:
@@ -145,8 +267,12 @@ def _validar_plan(front: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]
                 or not name
                 or name.endswith("/")
                 or any(char in name for char in "*?[]")
+                or "->" in name
             ):
-                raise ValueError(f"caminho de arquivo inseguro em {task['id']}: {name}")
+                raise ValueError(
+                    f"caminho de arquivo inseguro em {task['id']}: {name}; use um path explícito de arquivo por "
+                    "item, sem glob, seta ou diretório, e declare origem e destino ao mover"
+                )
             if not any(
                 name.startswith(pattern) if pattern.endswith("/") else fnmatch.fnmatch(name, pattern)
                 for pattern in front["scope"]
@@ -166,6 +292,61 @@ def _validar_plan(front: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]
             if task["id"] not in next(t for t in tasks if t["id"] == peer).get("pair_with", []):
                 raise ValueError(f"pair_with deve ser recíproco entre {task['id']} e {peer}")
     return plan
+
+
+def _parse_listas(raw: str, keys: tuple[str, ...], label: str, owner: str) -> dict[str, Any]:
+    answer = _normalizar_textos(_strict_json(raw, set(keys), label), keys)
+    for key in keys:
+        _lista_texto(answer, key, owner)
+    return answer
+
+
+def _parse_fechamento(raw: str, front_id: str) -> dict[str, Any]:
+    closure = _normalizar_textos(
+        _strict_json(raw, {"assignments", "interfaces", "questions"}, f"fechamento de {front_id}"),
+        ("interfaces", "questions"),
+    )
+    if not isinstance(closure["assignments"], list) or not all(
+        isinstance(a, dict)
+        and set(a) == {"task_id", "files", "builder_context"}
+        and isinstance(a.get("task_id"), str)
+        and isinstance(a.get("files"), list)
+        and all(isinstance(name, str) for name in a["files"])
+        and isinstance(a.get("builder_context"), str)
+        and a["builder_context"].strip()
+        for a in closure["assignments"]
+    ):
+        raise ValueError(f"assignments inválidos no fechamento de {front_id}")
+    _lista_texto(closure, "interfaces", front_id)
+    _lista_texto(closure, "questions", front_id)
+    return closure
+
+
+def _parse_construtor(raw: str, key: str) -> dict[str, Any]:
+    report = _normalizar_textos(
+        _strict_json(
+            raw, {"status", "summary", "files_changed", "checks", "risks", "questions"}, f"retorno do construtor {key}"
+        ),
+        ("checks", "risks", "questions"),
+    )
+    if report["status"] not in {"completed", "blocked"} or not isinstance(report["summary"], str):
+        raise ValueError(f"retorno do construtor inválido em {key}: status deve ser completed ou blocked")
+    for field in ("files_changed", "checks", "risks", "questions"):
+        _lista_texto(report, field, key)
+    return report
+
+
+def _parse_auditoria(raw: str, front_id: str) -> dict[str, Any]:
+    keys = ("findings", "questions", "verification_evidence")
+    audit = _normalizar_textos(
+        _strict_json(raw, {"approved", *keys}, f"auditoria de {front_id}"),
+        keys,
+    )
+    if type(audit["approved"]) is not bool:
+        raise ValueError("approved precisa ser booleano")
+    for key in keys:
+        _lista_texto(audit, key, front_id)
+    return audit
 
 
 def _repo_path(root: Path, front: dict[str, Any]) -> Path:
@@ -200,25 +381,32 @@ async def _invoke(
     semaphore: asyncio.Semaphore,
     cwd: Path | None = None,
     read_only: bool = False,
+    schema: Path | None = None,
+    free: bool = False,
 ) -> tuple[str, str]:
     from invocar_agentes import comando_para
 
     limits = state["limits"]
-    if state["calls"] >= limits["max_calls"]:
-        raise ValueError("limite global max_calls atingido; iniciativa pausada")
+    if not free and state["calls"] >= limits["max_calls"]:
+        raise ValueError("limite global max_calls atingido; aumente limits.max_calls no manifesto e rode de novo")
     fallback = {"supervisor": "auditor", "construtor": "executor"}
     agent = profile.get(role) or profile.get(fallback.get(role, ""))
     if not isinstance(agent, dict) or agent.get("modo") != "cli" or agent.get("provedor") not in {"claude", "codex"}:
         raise ValueError(f"perfil requer papel CLI {role}")
     if not shutil.which("claude" if agent["provedor"] == "claude" else "codex"):
         raise ValueError(f"CLI do papel {role} indisponível")
-    state["calls"] += 1
-    state["reserved_calls"].append(call_id)
+    if free:
+        state.setdefault("repair_calls", []).append(call_id)
+    else:
+        state["calls"] += 1
+        state["reserved_calls"].append(call_id)
     _save(state_file, state)
     async with semaphore:
         process = await asyncio.create_subprocess_exec(
             *comando_para(
-                agent["provedor"], {**agent, "_papel": "auditor" if role == "auditor" or read_only else "executor"}
+                agent["provedor"],
+                {**agent, "_papel": "auditor" if role == "auditor" or read_only else "executor"},
+                schema,
             ),
             cwd=cwd or root,
             stdin=asyncio.subprocess.PIPE,
@@ -245,19 +433,40 @@ def _save(path: Path, state: dict[str, Any]) -> None:
     tmp.replace(path)
 
 
-def _changed_files(repo: Path) -> set[str]:
+def _ignorado(name: str, patterns: tuple[str, ...]) -> bool:
+    return any(name.startswith(p) if p.endswith("/") else fnmatch.fnmatch(name, p) for p in patterns)
+
+
+def _changed_files(repo: Path, ignored: tuple[str, ...] = IGNORADOS_PADRAO) -> set[str]:
     result = subprocess.run(
         ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd=repo, capture_output=True, check=False
     )
     if result.returncode != 0:
         raise ValueError(f"não foi possível ler git status em {repo}")
     paths: set[str] = set()
-    for item in result.stdout.split(b"\0"):
-        if len(item) >= 4:
-            name = item[3:].decode("utf-8", "replace").replace("\\", "/")
-            if not name.startswith(".init-harness/state/"):
+    entries = result.stdout.split(b"\0")
+    index = 0
+    while index < len(entries):
+        item = entries[index]
+        index += 1
+        if len(item) < 4:
+            continue
+        names = [item[3:]]
+        # Em -z, renomeação e cópia trazem o caminho de origem na entrada seguinte, sem prefixo de status.
+        if b"R" in item[:2] or b"C" in item[:2]:
+            if b"R" in item[:2] and index < len(entries):
+                names.append(entries[index])
+            index += 1
+        for raw in names:
+            name = raw.decode("utf-8", "replace").replace("\\", "/")
+            if name and not _ignorado(name, ignored):
                 paths.add(name)
     return paths
+
+
+def _git_ignora(repo: Path, name: str) -> bool:
+    result = subprocess.run(["git", "check-ignore", "-q", "--", name], cwd=repo, capture_output=True, check=False)
+    return result.returncode == 0
 
 
 def _change_context(repo: Path, paths: list[str]) -> str:
@@ -326,8 +535,8 @@ def _file_fingerprint(path: Path) -> str:
     return f"{path.stat().st_mode & 0o777}:{digest}"
 
 
-def _repo_snapshot(repo: Path) -> tuple[set[str], dict[str, str]]:
-    paths = _changed_files(repo)
+def _repo_snapshot(repo: Path, ignored: tuple[str, ...] = IGNORADOS_PADRAO) -> tuple[set[str], dict[str, str]]:
+    paths = _changed_files(repo, ignored)
     fingerprints: dict[str, str] = {}
     for name in paths:
         path = repo.joinpath(*PurePosixPath(name).parts)
@@ -387,6 +596,8 @@ async def _run_isolated_builder(
     call_id: str,
     timeout: int,
     semaphore: asyncio.Semaphore,
+    ignored: tuple[str, ...] = IGNORADOS_PADRAO,
+    schema: Path | None = None,
 ) -> tuple[str, Path, set[str]]:
     worktree = Path(tempfile.mkdtemp(prefix="init-harness-builder-"))
     registered = False
@@ -403,15 +614,15 @@ async def _run_isolated_builder(
             raise ValueError(f"não foi possível criar worktree isolado para {call_id}: {added.stderr[-1000:]}")
         registered = True
         _copy_declared_paths(repo, worktree, context_paths)
-        baseline_status = _changed_files(worktree)
+        baseline_status = _changed_files(worktree, ignored)
         baseline_hashes = {
             name: _file_fingerprint(_safe_repo_file(repo, worktree, name)[1])
             for name in context_paths - set(task["files"])
         }
         raw, _ = await _invoke(
-            root, state, state_file, profile, "construtor", prompt, call_id, timeout, semaphore, worktree
+            root, state, state_file, profile, "construtor", prompt, call_id, timeout, semaphore, worktree, schema=schema
         )
-        after_status = _changed_files(worktree)
+        after_status = _changed_files(worktree, ignored)
         unexpected_status = after_status - baseline_status - set(task["files"])
         changed_context = [
             name
@@ -419,8 +630,10 @@ async def _run_isolated_builder(
             if _file_fingerprint(_safe_repo_file(repo, worktree, name)[1]) != before
         ]
         if unexpected_status or changed_context:
-            raise ValueError(
-                f"construtor alterou arquivos fora do escopo: {sorted(unexpected_status | set(changed_context))}"
+            outside = sorted(unexpected_status | set(changed_context))
+            raise _TarefaRecusada(
+                f"construtor alterou arquivos fora do escopo: {outside}",
+                {"status": "rejected", "out_of_scope": outside, "response_excerpt": _trecho(raw, 2000)},
             )
         keep_worktree = True
         return raw, worktree, after_status - baseline_status
@@ -436,7 +649,7 @@ async def _run_isolated_builder(
 def _integrate_task_files(repo: Path, worktree: Path, task: dict[str, Any]) -> None:
     prepared: list[tuple[Path, Path, str]] = []
     for name in task["files"]:
-        source, _ = _safe_repo_file(repo, worktree, name)
+        _, source = _safe_repo_file(repo, worktree, name)  # origem é o worktree do construtor
         destination = repo.joinpath(*PurePosixPath(name).parts)
         if not destination.parent.resolve().is_relative_to(repo.resolve()):
             raise ValueError(f"caminho de destino sai do repositório: {name}")
@@ -525,7 +738,9 @@ def _resume_with_answers(state: dict[str, Any], answers: Any) -> None:
     elif stage == "consultation":
         state.get("consultations", {}).get(front_id, {}).pop(task_id, None)
     elif stage == "build":
-        state.get("build_attempts", {}).pop(f"{front_id}:{task_id}", None)
+        attempt = state.get("build_attempts", {}).pop(f"{front_id}:{task_id}", None)
+        if attempt is not None:
+            state.setdefault("build_history", []).append({"task": f"{front_id}:{task_id}", **attempt})
     state.pop("questions", None)
     state.pop("blockers", None)
     state.pop("pending_checkpoint", None)
@@ -657,8 +872,32 @@ def _apply_chief_decision(state: dict[str, Any], decision: Any, fronts: list[dic
     state["motivo"] = None
 
 
+def manifesto_salvo(root: Path, initiative_id: str) -> dict[str, Any]:
+    """Manifesto copiado no estado da iniciativa, para retomar só pelo initiative_id."""
+    if not _ID.fullmatch(initiative_id):
+        raise ValueError("initiative_id inválido")
+    path = root / ".init-harness" / "state" / "orquestracao" / initiative_id / "manifesto.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(
+            f"manifesto salvo ausente ou ilegível em {path}; rode uma vez com --iniciativa: {exc}"
+        ) from exc
+    if not isinstance(data, dict):
+        raise ValueError(f"manifesto salvo inválido em {path}")
+    return data
+
+
+def _copiar_manifesto(path: Path, manifest: dict[str, Any]) -> None:
+    content = json.dumps(manifest, ensure_ascii=False, indent=2)
+    if path.is_file() and path.read_text(encoding="utf-8") == content:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+
+
 async def executar_iniciativa(
-    root: Path, manifest: dict[str, Any], answers: Any = None, chief_decision: Any = None
+    root: Path, manifest: dict[str, Any], answers: Any = None, chief_decision: Any = None, retomar: bool = False
 ) -> dict[str, Any]:
     from invocar_agentes import ler_config, obter_perfil
 
@@ -668,6 +907,10 @@ async def executar_iniciativa(
     timeout = config.get("timeout_segundos", 1800)
     if type(timeout) is not int or timeout < 1:
         raise ValueError("timeout_segundos inválido")
+    extra_ignored = config.get("caminhos_ignorados", [])
+    if not isinstance(extra_ignored, list) or not all(isinstance(x, str) and x.strip() for x in extra_ignored):
+        raise ValueError("caminhos_ignorados precisa ser uma lista de caminhos em orquestracao.json")
+    ignored = IGNORADOS_PADRAO + tuple(x.strip().replace("\\", "/").removeprefix("./") for x in extra_ignored)
     repos = {f["id"]: _repo_path(root, f) for f in fronts}
     for front in fronts:
         spec_path = (repos[front["id"]] / front["spec"]).resolve()
@@ -675,11 +918,28 @@ async def executar_iniciativa(
             raise ValueError(f"spec inexistente ou fora do repositório da frente {front['id']}: {front['spec']}")
     state_dir = root / ".init-harness" / "state" / "orquestracao" / initiative
     state_file = state_dir / "estado.json"
+    manifest_copy = state_dir / "manifesto.json"
     if state_file.exists():
         state = json.loads(state_file.read_text(encoding="utf-8"))
-        if state.get("manifest_fingerprint") != _fingerprint(manifest):
-            raise ValueError("manifesto mudou desde a criação do estado; use outro initiative_id")
+        # Estados anteriores guardam a impressão digital do manifesto inteiro; os novos deixam limits de fora.
+        if state.get("manifest_fingerprint") not in {_manifest_fingerprint(manifest), _fingerprint(manifest)}:
+            raise ValueError("manifesto mudou desde a criação do estado (além de limits); use outro initiative_id")
+        state["manifest_fingerprint"] = _manifest_fingerprint(manifest)
+        if state.get("limits") != limits:
+            state.setdefault("limit_changes", []).append(
+                {"from": state.get("limits"), "to": limits, "created_at": datetime.now(timezone.utc).isoformat()}
+            )
+            state["limits"] = limits
+            _save(state_file, state)
+        _copiar_manifesto(manifest_copy, manifest)
         if state.get("estado") == "pausada":
+            if answers is None and retomar and not state.get("questions"):
+                if not state.get("pending_checkpoint"):
+                    raise ValueError(
+                        f"a pausa ({state.get('motivo')}) não tem etapa para refazer; ajuste a causa e inicie "
+                        "outra iniciativa"
+                    )
+                answers = {"answers": []}
             if answers is None:
                 return state
             candidate = copy.deepcopy(state)
@@ -688,7 +948,8 @@ async def executar_iniciativa(
             if candidate.get("calls", 0) + minimum > candidate.get("limits", {}).get("max_calls", 0):
                 raise ValueError(
                     "limite max_calls insuficiente para retomar; "
-                    f"mínimo restante estimado: {minimum}. A pausa foi preservada"
+                    f"mínimo restante estimado: {minimum}. A pausa foi preservada; aumente limits.max_calls "
+                    "no manifesto e rode com --iniciativa"
                 )
             state = candidate
             _save(state_file, state)
@@ -752,7 +1013,7 @@ async def executar_iniciativa(
             "initiative_id": initiative,
             "profile": profile_id,
             "limits": limits,
-            "manifest_fingerprint": _fingerprint(manifest),
+            "manifest_fingerprint": _manifest_fingerprint(manifest),
             "created_at": datetime.now(timezone.utc).isoformat(),
             "calls": 0,
             "reserved_calls": [],
@@ -771,10 +1032,73 @@ async def executar_iniciativa(
         if chief_decision is not None:
             raise ValueError("--decisao-chefe requer iniciativa aguardando auditoria do chefe")
         _save(state_file, state)
+        _copiar_manifesto(manifest_copy, manifest)
     semaphore = asyncio.Semaphore(limits["max_parallel"])
     supervisor_count = len(fronts)
     if supervisor_count > limits["max_agents"]:
         raise ValueError("max_agents insuficiente para um supervisor por frente")
+    schemas = _gravar_esquemas(root, state_dir)
+
+    async def repair(raw: str, parse: Any, call_id: str, role: str, shape: str, stage: str, cwd: Path) -> Any:
+        """Valida a resposta; na falha, guarda um trecho e pede um reparo de formato que não conta em max_calls."""
+        try:
+            return parse(raw)
+        except ValueError as error:
+            _registrar_invalida(state, state_file, call_id, raw, error)
+            prompt = (
+                REPARO
+                + "\nFORMATO:\n"
+                + shape
+                + "\nERRO DE VALIDAÇÃO:\n"
+                + str(error)
+                + "\nRESPOSTA ANTERIOR:\n"
+                + raw[:60000]
+            )
+            fixed, _ = await _invoke(
+                root,
+                state,
+                state_file,
+                profile,
+                role,
+                prompt,
+                f"{call_id}:reparo",
+                timeout,
+                semaphore,
+                cwd,
+                read_only=True,
+                schema=schemas.get(stage),
+                free=True,
+            )
+            try:
+                value = parse(fixed)
+            except ValueError as repair_error:
+                _registrar_invalida(state, state_file, f"{call_id}:reparo", fixed, repair_error)
+                raise ValueError(
+                    f"{repair_error} (persistiu após um reparo automático; "
+                    f"trechos em invalid_responses de {state_file})"
+                ) from repair_error
+            state["invalid_responses"][call_id]["repaired"] = True
+            _save(state_file, state)
+            return value
+
+    async def call_json(
+        role: str, prompt: str, call_id: str, cwd: Path, parse: Any, shape: str, stage: str
+    ) -> tuple[Any, str]:
+        raw, model = await _invoke(
+            root,
+            state,
+            state_file,
+            profile,
+            role,
+            prompt,
+            call_id,
+            timeout,
+            semaphore,
+            cwd,
+            read_only=True,
+            schema=schemas.get(stage),
+        )
+        return await repair(raw, parse, call_id, role, shape, stage, cwd), model
 
     # Cada supervisor planeja sua frente; a reconciliação cruzada ocorre antes da escrita.
     for front in fronts:
@@ -785,9 +1109,12 @@ async def executar_iniciativa(
         checkpoint = {"stage": "plan", "front_id": front["id"]}
         prompt = (
             "PAPEL: supervisor read-only. Analise a spec e o escopo desta frente; não edite arquivos nem rode testes. "
-            'Retorne JSON estrito {"tasks":[{"id":"...","objective":"...","files":[...],'
-            '"depends_on":[...],"acceptance":[...],"pair_with":[...]}],"interfaces":[],"questions":[]}. '
-            "pair_with declara pares recíprocos para uma única rodada consultiva pré-escrita.\nESPECIALIDADE:\n"
+            "Retorne JSON estrito "
+            + FORMATO_PLANO
+            + ". "
+            + LISTAS_DE_TEXTO
+            + CAMINHOS_EXPLICITOS
+            + "pair_with declara pares recíprocos para uma única rodada consultiva pré-escrita.\nESPECIALIDADE:\n"
             + specialty
             + "\nFRONT:\n"
             + json.dumps(front, ensure_ascii=False)
@@ -795,26 +1122,30 @@ async def executar_iniciativa(
             + spec_text
             + _decision_context(state, checkpoint)
         )
-        raw, model = await _invoke(
-            root,
-            state,
-            state_file,
-            profile,
+        plan, model = await call_json(
             "supervisor",
             prompt,
             f"plan:{front['id']}",
-            timeout,
-            semaphore,
             repos[front["id"]],
-            read_only=True,
+            lambda raw, front=front: _validar_plan(
+                front, _strict_json(raw, {"tasks", "interfaces", "questions"}, f"plano de {front['id']}")
+            ),
+            FORMATO_PLANO,
+            "plan",
         )
-        plan = _validar_plan(front, _strict_json(raw, {"tasks", "interfaces", "questions"}, f"plano de {front['id']}"))
         state["plans"][front["id"]] = plan
         state.setdefault("models", {})[f"supervisor:{front['id']}"] = model
         _save(state_file, state)
         if plan["questions"]:
             return _persist_pause(state_file, state, "perguntas humanas no planejamento", plan["questions"], checkpoint)
 
+    needed = state["calls"] + _minimum_remaining_calls(state, fronts)
+    if needed > limits["max_calls"]:
+        raise ValueError(
+            f"limits.max_calls={limits['max_calls']} não cobre o plano: são necessárias ao menos {needed} chamadas "
+            "(planos, alinhamento, consultas, fechamento, construtores e auditoria). Os planos ficam salvos; aumente "
+            "limits.max_calls no manifesto e rode de novo com --iniciativa"
+        )
     tasks_all = [(f, t) for f in fronts for t in state["plans"][f["id"]]["tasks"]]
     if supervisor_count + len(tasks_all) > limits["max_agents"]:
         return _persist_pause(state_file, state, "max_agents insuficiente para supervisores e construtores planejados")
@@ -844,7 +1175,7 @@ async def executar_iniciativa(
         assigned = {
             name for owner_front, task in tasks_all if owner_front["id"] == front["id"] for name in task["files"]
         }
-        dirty = _changed_files(repos[front["id"]])
+        dirty = _changed_files(repos[front["id"]], ignored)
         overlap = sorted(assigned & dirty)
         if overlap and front["id"] not in state["initial_paths"]:
             return _persist_pause(
@@ -865,8 +1196,11 @@ async def executar_iniciativa(
         specialty = _specialty_prompt(root, repos[front["id"]], front["specialty"])
         prompt = (
             "PAPEL: supervisor read-only. Compare seu plano com todos os planos pares antes da escrita. "
-            'Responda JSON estrito {"agreements":[],"conflicts":[],"questions":[]}. '
-            "Registre interfaces compatíveis e conflitos concretos de escopo/contrato.\nSUA FRENTE:\n"
+            "Responda JSON estrito "
+            + FORMATO_ALINHAMENTO
+            + ". "
+            + LISTAS_DE_TEXTO
+            + "Registre interfaces compatíveis e conflitos concretos de escopo/contrato.\nSUA FRENTE:\n"
             + json.dumps(front, ensure_ascii=False)
             + "\nESPECIALIDADE:\n"
             + specialty
@@ -874,22 +1208,17 @@ async def executar_iniciativa(
             + json.dumps(all_plans, ensure_ascii=False)
             + _decision_context(state, checkpoint)
         )
-        raw, _ = await _invoke(
-            root,
-            state,
-            state_file,
-            profile,
+        answer, _ = await call_json(
             "supervisor",
             prompt,
             f"agreement:{front['id']}",
-            timeout,
-            semaphore,
             repos[front["id"]],
-            read_only=True,
+            lambda raw, front=front: _parse_listas(
+                raw, ("agreements", "conflicts", "questions"), f"alinhamento de {front['id']}", front["id"]
+            ),
+            FORMATO_ALINHAMENTO,
+            "agreement",
         )
-        answer = _strict_json(raw, {"agreements", "conflicts", "questions"}, f"alinhamento de {front['id']}")
-        for key in ("agreements", "conflicts", "questions"):
-            _lista_texto(answer, key, front["id"])
         state["agreements"][front["id"]] = answer
         _save(state_file, state)
         if answer["questions"]:
@@ -922,29 +1251,26 @@ async def executar_iniciativa(
                 "PAPEL: construtor em consulta read-only, rodada única antes da escrita. "
                 "Não edite arquivos nem rode testes. "
                 "Revise sua proposta e as propostas dos pares; responda JSON estrito "
-                '{"suggestions":[],"questions":[]}. '
-                "Não amplie arquivos atribuídos.\nSUA TAREFA:\n"
+                + FORMATO_CONSULTA
+                + ". "
+                + LISTAS_DE_TEXTO
+                + "Não amplie arquivos atribuídos.\nSUA TAREFA:\n"
                 + json.dumps(task, ensure_ascii=False)
                 + "\nPROPOSTAS DOS PARES:\n"
                 + json.dumps(proposals, ensure_ascii=False)
                 + _decision_context(state, checkpoint)
             )
-            raw, _ = await _invoke(
-                root,
-                state,
-                state_file,
-                profile,
+            feedback, _ = await call_json(
                 "construtor",
                 prompt,
                 f"consult:{front['id']}:{task['id']}",
-                timeout,
-                semaphore,
                 repos[front["id"]],
-                read_only=True,
+                lambda raw, task=task: _parse_listas(
+                    raw, ("suggestions", "questions"), f"consulta de {task['id']}", task["id"]
+                ),
+                FORMATO_CONSULTA,
+                "consultation",
             )
-            feedback = _strict_json(raw, {"suggestions", "questions"}, f"consulta de {task['id']}")
-            _lista_texto(feedback, "suggestions", task["id"])
-            _lista_texto(feedback, "questions", task["id"])
             state.setdefault("consultations", {}).setdefault(front["id"], {})[task["id"]] = feedback
             _save(state_file, state)
             if feedback["questions"]:
@@ -962,9 +1288,12 @@ async def executar_iniciativa(
         specialty = _specialty_prompt(root, repos[front["id"]], front["specialty"])
         prompt = (
             "PAPEL: supervisor read-only. Feche o plano após consultar as propostas dos pares. "
-            'Retorne JSON estrito {"assignments":[{"task_id":"...","files":[...],'
-            '"builder_context":"..."}],"interfaces":[],"questions":[]}. '
-            "Preserve arquivos e escopo. Em builder_context, entregue apenas decisões, contexto técnico, "
+            "Retorne JSON estrito "
+            + FORMATO_FECHAMENTO
+            + ". "
+            + LISTAS_DE_TEXTO
+            + CAMINHOS_EXPLICITOS
+            + "Preserve arquivos e escopo. Em builder_context, entregue apenas decisões, contexto técnico, "
             "limites e instruções necessários para aquela tarefa, incluindo orientação especializada "
             "aplicável; não repita a spec inteira.\nESPECIALIDADE:\n"
             + specialty
@@ -974,33 +1303,15 @@ async def executar_iniciativa(
             + json.dumps(state["consultations"].get(front["id"], {}), ensure_ascii=False)
             + _decision_context(state, checkpoint)
         )
-        raw, _ = await _invoke(
-            root,
-            state,
-            state_file,
-            profile,
+        closure, _ = await call_json(
             "supervisor",
             prompt,
             f"closure:{front['id']}",
-            timeout,
-            semaphore,
             repos[front["id"]],
-            read_only=True,
+            lambda raw, front=front: _parse_fechamento(raw, front["id"]),
+            FORMATO_FECHAMENTO,
+            "closure",
         )
-        closure = _strict_json(raw, {"assignments", "interfaces", "questions"}, f"fechamento de {front['id']}")
-        if not isinstance(closure["assignments"], list) or not all(
-            isinstance(a, dict)
-            and set(a) == {"task_id", "files", "builder_context"}
-            and isinstance(a.get("task_id"), str)
-            and isinstance(a.get("files"), list)
-            and all(isinstance(name, str) for name in a["files"])
-            and isinstance(a.get("builder_context"), str)
-            and a["builder_context"].strip()
-            for a in closure["assignments"]
-        ):
-            raise ValueError(f"assignments inválidos no fechamento de {front['id']}")
-        _lista_texto(closure, "interfaces", front["id"])
-        _lista_texto(closure, "questions", front["id"])
         expected = {t["id"]: sorted(t["files"]) for t in tasks_by_front[front["id"]]}
         assignment_ids = [a["task_id"] for a in closure["assignments"]]
         if len(assignment_ids) != len(set(assignment_ids)):
@@ -1060,9 +1371,11 @@ async def executar_iniciativa(
                 "verificações solicitadas nos critérios recebidos e relate resultados reais. "
                 "Não faça commit/push/merge. Incorpore sugestões dos construtores pareados quando "
                 "compatíveis com a spec; reporte divergências ao supervisor. "
-                'Responda somente JSON estrito: {"status":"completed","summary":"...",'
-                '"files_changed":[],"checks":[],"risks":[],"questions":[]}. Status deve ser '
-                "completed ou blocked. "
+                "Responda somente JSON estrito: "
+                + FORMATO_CONSTRUTOR
+                + ". Status deve ser completed ou blocked. "
+                + LISTAS_DE_TEXTO
+                + "files_changed lista só arquivos atribuídos; não registre artefatos gerados como cache ou lockfile. "
                 "Se uma resposta humana for necessária, use status blocked e registre perguntas objetivas.\nTAREFA:\n"
                 + json.dumps(task, ensure_ascii=False)
                 + "\nCONTEXTO DO SUPERVISOR ("
@@ -1092,32 +1405,46 @@ async def executar_iniciativa(
                 f"build:{key}",
                 timeout,
                 semaphore,
+                ignored,
+                schemas.get("build"),
             )
-            report = _strict_json(
-                raw,
-                {"status", "summary", "files_changed", "checks", "risks", "questions"},
-                f"retorno do construtor {key}",
-            )
-            if report["status"] not in {"completed", "blocked"} or not isinstance(report["summary"], str):
+            try:
+                report = await repair(
+                    raw,
+                    lambda text, key=key: _parse_construtor(text, key),
+                    f"build:{key}",
+                    "construtor",
+                    FORMATO_CONSTRUTOR,
+                    "build",
+                    worktree,
+                )
+            except BaseException:
                 _cleanup_task_worktree(repo, worktree)
-                raise ValueError(f"retorno do construtor inválido em {key}")
-            for field in ("files_changed", "checks", "risks", "questions"):
-                _lista_texto(report, field, key)
-            if not set(report["files_changed"]) <= set(task["files"]):
+                raise
+            extra = sorted(set(report["files_changed"]) - set(task["files"]))
+            # Artefato gerado (cache, lockfile ignorado) não integra; fica registrado no relatório.
+            generated = [name for name in extra if _ignorado(name, ignored) or _git_ignora(worktree, name)]
+            if generated:
+                report["generated_files_ignored"] = generated
+            outside = [name for name in extra if name not in generated]
+            if outside:
                 _cleanup_task_worktree(repo, worktree)
-                raise ValueError(f"construtor reportou arquivo fora do escopo em {key}")
+                raise _TarefaRecusada(
+                    f"construtor reportou arquivo fora do escopo em {key}: {outside}",
+                    {**report, "status": "rejected", "out_of_scope": outside},
+                )
             if report["questions"] and report["status"] != "blocked":
                 _cleanup_task_worktree(repo, worktree)
                 raise ValueError(f"construtor precisa marcar status blocked quando fizer perguntas em {key}")
             report["observed_files"] = sorted(observed_files)
             return key, report, worktree
 
-        batch_snapshots = {front["id"]: _repo_snapshot(repos[front["id"]]) for _, front, _ in batch}
+        batch_snapshots = {front["id"]: _repo_snapshot(repos[front["id"]], ignored) for _, front, _ in batch}
         results = await asyncio.gather(*(build_one(item) for item in batch), return_exceptions=True)
         successful = [result for result in results if not isinstance(result, BaseException)]
         touched_repos = {}
         for front_id, snapshot in batch_snapshots.items():
-            current = _repo_snapshot(repos[front_id])
+            current = _repo_snapshot(repos[front_id], ignored)
             if current != snapshot:
                 touched_repos[front_id] = sorted(current[0] ^ snapshot[0]) + sorted(
                     name for name in current[1].keys() & snapshot[1].keys() if current[1][name] != snapshot[1][name]
@@ -1127,8 +1454,13 @@ async def executar_iniciativa(
                 key, _, worktree = result
                 front_id = key.split(":", 1)[0]
                 _cleanup_task_worktree(repos[front_id], worktree)
+            first_front, first_task = batch[0][1]["id"], batch[0][2]["id"]
             return _persist_pause(
-                state_file, state, f"repositório principal mudou durante execução isolada: {touched_repos}"
+                state_file,
+                state,
+                f"repositório principal mudou durante execução isolada: {touched_repos}; "
+                "inclua o gerador em caminhos_ignorados se for saída do ambiente e retome com --retomar",
+                checkpoint={"stage": "build", "front_id": first_front, "task_id": first_task},
             )
         failure = next(
             ((item[0], result) for item, result in zip(batch, results) if isinstance(result, BaseException)), None
@@ -1136,7 +1468,16 @@ async def executar_iniciativa(
         if failure:
             for success_key, _, worktree in successful:
                 _cleanup_task_worktree(repos[success_key.split(":", 1)[0]], worktree)
-            return _persist_pause(state_file, state, f"construtor bloqueado em {failure[0]}: {failure[1]}")
+            key, error = failure
+            attempt = error.attempt if isinstance(error, _TarefaRecusada) else {"status": "failed"}
+            state.setdefault("build_attempts", {})[key] = {**attempt, "reason": str(error)[:2000]}
+            front_id, task_id = key.split(":", 1)
+            return _persist_pause(
+                state_file,
+                state,
+                f"construtor bloqueado em {key}: {error}",
+                checkpoint={"stage": "build", "front_id": front_id, "task_id": task_id},
+            )
         blocked: list[tuple[str, dict[str, Any], dict[str, Any], Path]] = []
         for item, result in zip(batch, results):
             key, report, worktree = result
@@ -1163,11 +1504,13 @@ async def executar_iniciativa(
                 return _persist_pause(
                     state_file, state, f"construtor precisa de decisão humana em {key}", report["questions"], checkpoint
                 )
-            return _persist_pause(state_file, state, f"construtor bloqueado em {key}: {report['summary']}")
+            return _persist_pause(
+                state_file, state, f"construtor bloqueado em {key}: {report['summary']}", checkpoint=checkpoint
+            )
 
     # Detecta alterações fora da lista declarada; permissões do CLI não isolam por arquivo.
     for front in fronts:
-        new_paths = _changed_files(repos[front["id"]]) - set(state["initial_paths"][front["id"]])
+        new_paths = _changed_files(repos[front["id"]], ignored) - set(state["initial_paths"][front["id"]])
         unexpected = sorted(new_paths - assigned_by_front[front["id"]])
         if unexpected:
             return _persist_pause(
@@ -1185,12 +1528,15 @@ async def executar_iniciativa(
         spec_text = (repos[front["id"]] / front["spec"]).read_text(encoding="utf-8")
         prompt = (
             "PAPEL: supervisor auditor read-only. Audite a spec e o diff local desta frente. Não rode testes. "
-            'Responda JSON estrito {"approved":true,"findings":[],"questions":[],"verification_evidence":[]}. '
-            "Não alegue validações não observadas.\nESPECIALIDADE:\n"
+            "Responda JSON estrito "
+            + FORMATO_AUDITORIA
+            + ". "
+            + LISTAS_DE_TEXTO
+            + "Não alegue validações não observadas.\nESPECIALIDADE:\n"
             + specialty
-            + "\nSPEC:\n"
+            + "\nSPEC ("
             + front["spec"]
-            + "\nPLANO:\n"
+            + "):\n"
             + spec_text
             + "\nPLANO:\n"
             + json.dumps(state["plans"][front["id"]], ensure_ascii=False)
@@ -1206,26 +1552,15 @@ async def executar_iniciativa(
             + _gate_scan(root, repo, front["scope"])[-20000:]
             + _decision_context(state, checkpoint)
         )
-        raw, _ = await _invoke(
-            root,
-            state,
-            state_file,
-            profile,
+        audit, _ = await call_json(
             "supervisor",
             prompt,
             f"audit:{front['id']}",
-            timeout,
-            semaphore,
             repo,
-            read_only=True,
+            lambda raw, front=front: _parse_auditoria(raw, front["id"]),
+            FORMATO_AUDITORIA,
+            "audit",
         )
-        audit = _strict_json(
-            raw, {"approved", "findings", "questions", "verification_evidence"}, f"auditoria de {front['id']}"
-        )
-        if type(audit["approved"]) is not bool:
-            raise ValueError("approved precisa ser booleano")
-        for key in ("findings", "questions", "verification_evidence"):
-            _lista_texto(audit, key, front["id"])
         state["audits"][front["id"]] = audit
         _save(state_file, state)
         if audit["questions"]:
@@ -1263,9 +1598,12 @@ async def executar_iniciativa(
 
 
 def _fingerprint(data: dict[str, Any]) -> str:
-    import hashlib
-
     return hashlib.sha256(json.dumps(data, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def _manifest_fingerprint(manifest: dict[str, Any]) -> str:
+    """Identidade da iniciativa sem limits, que o humano pode ajustar para retomar."""
+    return _fingerprint({key: value for key, value in manifest.items() if key != "limits"})
 
 
 def _persist_pause(

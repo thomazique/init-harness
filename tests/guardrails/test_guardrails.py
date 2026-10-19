@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import importlib
+import json
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -204,6 +207,22 @@ class FrentesTest(unittest.TestCase):
         with patch.object(L, "frentes", return_value=existentes):
             self.assertEqual(2, len(L.frentes_da_branch(raiz, "main")))
             self.assertIsNone(L.frente_da_branch(raiz, "main"))
+
+
+class SaidaDosHooksTest(unittest.TestCase):
+    def test_hook_escreve_utf8_mesmo_com_console_em_outra_codificacao(self) -> None:
+        codigo = (
+            "import sys; sys.path.insert(0, sys.argv[1]); import _lib as L; "
+            "L.emitir({'systemMessage': L.ler_entrada().get('m', '') + ' Há código, seção 6'})"
+        )
+        r = subprocess.run(
+            [sys.executable, "-c", codigo, str(RAIZ / ".claude" / "hooks")],
+            input='{"m": "ação"}'.encode("utf-8"),
+            capture_output=True,
+            env={**os.environ, "PYTHONIOENCODING": "cp1252"},
+        )
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertEqual("ação Há código, seção 6", json.loads(r.stdout.decode("utf-8"))["systemMessage"])
 
 
 if __name__ == "__main__":
