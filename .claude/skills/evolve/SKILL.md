@@ -1,6 +1,6 @@
 ---
 name: evolve
-description: Escreve a candidata de uma proposta de evolução de skill a partir da evidência registrada, valida e leva até a avaliação. Use quando existir uma sugestão em suggestions.jsonl ou uma proposta em draft para uma skill, quando o usuário pedir para corrigir ou melhorar uma skill com base em falhas recorrentes, ou depois de /record revelar um padrão. Nunca promove a skill: a aceitação é do humano.
+description: Escreve a candidata de uma proposta de evolução de skill a partir da evidência registrada, valida e leva até a avaliação. Use quando existir uma sugestão em suggestions.jsonl ou uma proposta em draft para uma skill, quando o usuário pedir para corrigir ou melhorar uma skill com base em falhas recorrentes, ou depois de /record revelar um padrão. Nunca promove a skill: a aceitação é do humano. Não use para registrar a experiência de uma sessão, que é record.
 ---
 # evolve
 

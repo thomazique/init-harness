@@ -15,7 +15,7 @@ from typing import Any
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-VERSION = "5.0.1"
+VERSION = "5.1.0"
 
 MANAGED_FILES = (
     "INIT-HARNESS.md",
@@ -33,6 +33,7 @@ MANAGED_FILES = (
     ".claude/hooks/pre_compact.py",
     ".claude/hooks/session_start.py",
     ".claude/hooks/stop_check.py",
+    ".claude/hooks/gate_diff.py",
     ".claude/agents/auditor-pilares.md",
     ".claude/agents/executor.md",
     ".claude/agents/revisor.md",
@@ -58,6 +59,7 @@ MANAGED_TREES = (
     ".claude/skills/record",
     ".claude/skills/evolve",
     ".claude/skills/orquestrar",
+    ".claude/skills/investigar",
 )
 PROJECT_TEMPLATES = {
     "CLAUDE.md": ".claude/skills/init-harness/templates/CLAUDE.template.md",

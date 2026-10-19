@@ -22,6 +22,7 @@ Uma chamada iniciada pelo runner CLI já é uma delegação: cumpra só o papel 
 sem escolher perfil, coordenar ou delegar novamente.
 Se o cliente não disponibilizar subagentes, informe a limitação e pare antes de
 implementar em modo de agente único.
+Em erro, teste falhando ou comportamento inesperado, use a skill `investigar` antes de corrigir.
 
 Em qualquer trabalho de frontend, leia `.claude/skills/frontend/SKILL.md` e as
 referências aplicáveis antes de alterar a interface. Identifique a stack e os

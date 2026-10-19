@@ -110,6 +110,7 @@ METODO_CLIENTE = (
     ".claude/skills/record/",
     ".claude/skills/evolve/",
     ".claude/skills/orquestrar/",
+    ".claude/skills/investigar/",
     ".claude/skills/pilares/",
     ".claude/skills/commit/",
     ".claude/skills/offboarding/",

@@ -6,10 +6,12 @@ import asyncio
 import copy
 import fnmatch
 import hashlib
+import importlib.util
 import json
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -279,6 +281,23 @@ def _change_context(repo: Path, paths: list[str]) -> str:
                 body = "[arquivo não textual ou não legível como UTF-8]"
             additions.append(f"\nNOVO ARQUIVO: {name}\n{body[:12000]}")
     return (diff + "\n".join(additions))[-50000:]
+
+
+def _gate_scan(root: Path, repo: Path, paths: list[str]) -> str:
+    """Varredura determinística de gates afrouxados; indisponível é cobertura ausente, nunca ausência de marcas."""
+    candidate = next(
+        (p for p in (repo / ".claude/hooks/gate_diff.py", root / ".claude/hooks/gate_diff.py") if p.is_file()), None
+    )
+    if candidate is None:
+        return "GATES: varredura indisponível (gate_diff.py ausente); cobertura ausente, não ausência de marcas."
+    try:
+        spec = importlib.util.spec_from_file_location("harness_gate_diff", candidate)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module  # dataclasses resolve o módulo da classe por sys.modules
+        spec.loader.exec_module(module)
+        return module.formatar(module.varrer(repo, caminhos=paths))
+    except Exception as error:
+        return f"GATES: varredura indisponível ({error}); cobertura ausente, não ausência de marcas."
 
 
 def _safe_repo_file(repo: Path, worktree: Path, relative: str) -> tuple[Path, Path]:
@@ -1181,6 +1200,10 @@ async def executar_iniciativa(
             )
             + "\nDIFF:\n"
             + diff[-50000:]
+            + "\nGATES (varredura determinística; para cada trecho lido, decida se o afrouxamento silencia "
+            "a falha que o gate pegava ou se o diff mostra medição ou decisão que o justifique; "
+            "sem justificativa visível, registre em findings):\n"
+            + _gate_scan(root, repo, front["scope"])[-20000:]
             + _decision_context(state, checkpoint)
         )
         raw, _ = await _invoke(
@@ -1234,6 +1257,7 @@ async def executar_iniciativa(
         )
     }
     report["chefe_auditoria"] = "pendente; chefe deve inspecionar o diff fora do runner, sem executar testes"
+    report["gates"] = {front["id"]: _gate_scan(root, repos[front["id"]], front["scope"]) for front in fronts}
     report_file.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     return report
 

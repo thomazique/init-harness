@@ -1,6 +1,6 @@
 ---
 name: commit
-description: Convenção de commits, branches e pull requests do harness. Use sempre que for criar commit, nomear branch, abrir ou descrever PR, ou revisar o que está staged. A mensagem nasce do diff real, nunca da memória da conversa.
+description: Convenção de commits, branches e pull requests do harness. Use sempre que for criar commit, nomear branch, abrir ou descrever PR, ou revisar o que está staged. A mensagem nasce do diff real, nunca da memória da conversa. Não use para auditar a qualidade do diff, que é a auditoria do orquestrar.
 ---
 # commit
 
@@ -18,6 +18,7 @@ Se a sessão fez mais do que a tarefa original, a mensagem reflete o diff real, 
 2. O commit do checkpoint inclui as atualizações de `docs/ai/` e `specs/` desse checkpoint.
 3. Modo `cliente` (`.init-harness/config.json`): `INIT-HARNESS.md` e as skills de método **nunca** em stage.
 4. Não usar `--no-verify`. Pre-commit falhou: corrigir a causa ou reportar ao usuário.
+5. Aviso de gate do pre-commit (`gate RH-...`): ler o trecho com `python .claude/hooks/gate_diff.py --staged`. Afrouxamento sem justificativa volta atrás; mantido só por decisão humana, com o motivo na mensagem.
 
 ---
 
@@ -68,7 +69,10 @@ Título na mesma convenção de tipo. Corpo:
 - <lido do diff completo do PR, todos os commits>
 
 ## Test plan
-- [ ] <o que foi executado para validar>
+- [ ] <o que foi executado para validar, com o resultado observado>
+
+## Edições de gate
+- <saída de `python .claude/hooks/gate_diff.py --base <branch base>`: cada trecho marcado com a decisão (restaurado, mantido com motivo, aberto para o dono) ou "nenhuma">
 
 ## Contexto
 - Frente: docs/ai/frentes/<slug>.md

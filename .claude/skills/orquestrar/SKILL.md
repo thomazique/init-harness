@@ -1,6 +1,6 @@
 ---
 name: orquestrar
-description: Use em solicitações de implementação ou alteração de software que envolvam coordenação de agentes, planejamento de frentes, execução paralela ou auditoria independente.
+description: Use em solicitações de implementação ou alteração de software que envolvam coordenação de agentes, planejamento de frentes, execução paralela ou auditoria independente. Não use para diagnosticar a causa de um erro antes de corrigir, que é investigar, nem para auditoria de prontidão, que é pilares.
 ---
 
 # Orquestração hierárquica
@@ -61,8 +61,8 @@ O formato antigo de lote com `frente_id`, `perfil`, `papel` (`executor` ou `audi
 
 3. **Reconciliação entre supervisores.** Antes de iniciar qualquer construtor, compartilhe com cada supervisor os planos de todas as frentes. Cada supervisor retorna JSON estrito `{ "agreements": [], "conflicts": [], "questions": [] }`. Considere as especialidades ao identificar conflitos de contratos e implantação. Qualquer conflito bloqueia o despacho até ser resolvido.
 4. **Execução pelos construtores.** Cada tarefa executa em um worktree Git temporário próprio. O runner rejeita alterações fora dos arquivos atribuídos, confere que o repositório principal não mudou durante a construção e integra em sequência somente os arquivos autorizados. Despache apenas tarefas sem dependências pendentes e dentro dos limites globais; perguntas e bloqueios sobem ao supervisor/chefe.
-5. **Auditoria das frentes.** Após a escrita, cada supervisor especialista audita sua spec e o diff em modo somente leitura; não roda testes.
-6. **Auditoria final do chefe.** Com as frentes aprovadas, o chefe confere o diff agregado, manifesto, specs, reconciliação e auditorias, sem rodar testes. Ele pode concluir com `approve`, pedir esclarecimento humano com `ask_human` ou apontar tarefas específicas com `revise`. Revisões limpam resultados afetados e suas dependências para nova execução e auditoria.
+5. **Auditoria das frentes.** Após a escrita, cada supervisor especialista audita sua spec e o diff em modo somente leitura; não roda testes. O material inclui a seção GATES, varredura determinística de `.claude/hooks/gate_diff.py` sobre o escopo da frente: teste removido ou pulado, limiar ou timeout relaxado, supressão de lint, exceção engolida. Trecho lido sem justificativa visível no diff vira finding.
+6. **Auditoria final do chefe.** Com as frentes aprovadas, o chefe confere o diff agregado, manifesto, specs, reconciliação, auditorias e o campo `gates` de `relatorio_para_chefe.json`, sem rodar testes. Varredura indisponível é cobertura ausente, nunca ausência de afrouxamento. Relatório de construtor ou supervisor é afirmação até ser conferido no diff. Ele pode concluir com `approve`, pedir esclarecimento humano com `ask_human` ou apontar tarefas específicas com `revise`. Revisões limpam resultados afetados e suas dependências para nova execução e auditoria.
 
 ## Git, estado e validação
 
