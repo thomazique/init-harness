@@ -61,6 +61,7 @@ def process_once(root: Path, runner_file: str, timeout: int) -> dict | None:
 
 
 def main() -> int:
+    E.forcar_utf8()
     parser = argparse.ArgumentParser(description="Worker econômico de evolução de skills.")
     parser.add_argument("--root", type=Path, default=Path.cwd())
     parser.add_argument("--runner", required=True)
