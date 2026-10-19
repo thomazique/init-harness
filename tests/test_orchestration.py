@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import importlib.util
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 KIT = Path(__file__).resolve().parents[1]
 RUNTIME = KIT / ".claude/skills/orquestrar/scripts/iniciativa_runtime.py"
@@ -114,6 +116,38 @@ class OrchestrationTest(unittest.TestCase):
             self.assertIn("marcas={RH-1:1}", runtime._gate_scan(KIT, repo, ["tests/"]))
             self.assertIn("marcas={nenhuma}", runtime._gate_scan(KIT, repo, ["src/"]))
             self.assertIn("indisponível", runtime._gate_scan(repo, repo, ["tests/"]))
+
+
+class CliCommandTest(unittest.TestCase):
+    def setUp(self) -> None:
+        spec = importlib.util.spec_from_file_location(
+            "invocar_agentes_teste", KIT / ".claude/skills/orquestrar/scripts/invocar_agentes.py"
+        )
+        assert spec is not None and spec.loader is not None
+        self.cli = importlib.util.module_from_spec(spec)
+        scripts = str(RUNTIME.parent)
+        sys.path.insert(0, scripts)  # o runner importa o runtime da própria pasta, como ao rodar como script
+        try:
+            spec.loader.exec_module(self.cli)
+        finally:
+            sys.path.remove(scripts)
+
+    def comando(self, provedor: str, **agente: str) -> list[str]:
+        with patch.object(self.cli.shutil, "which", side_effect=lambda nome: f"/bin/{nome}"):
+            return self.cli.comando_para(provedor, {"modelo": "opus", "_papel": "executor", **agente})
+
+    def test_claude_applies_configured_effort(self) -> None:
+        comando = self.comando("claude", raciocinio="high")
+        self.assertEqual("high", comando[comando.index("--effort") + 1])
+        self.assertNotIn("--effort", self.comando("claude"))
+
+    def test_codex_keeps_reasoning_config(self) -> None:
+        self.assertIn('model_reasoning_effort="xhigh"', self.comando("codex", raciocinio="xhigh"))
+
+    def test_effort_outside_the_schema_is_rejected(self) -> None:
+        for provedor in ("claude", "codex"):
+            with self.subTest(provedor=provedor), self.assertRaises(ValueError):
+                self.comando(provedor, raciocinio="high; rm -rf /")
 
 
 if __name__ == "__main__":

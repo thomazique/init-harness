@@ -6,7 +6,7 @@
 
 <!-- Modelo de entrada (copiar abaixo da última, numeração sequencial):
 
-## D-0001 — <título curto>
+## D-XXXX — <título curto>
 
 - **Data:** AAAA-MM-DD
 - **Frente / spec:** docs/ai/frentes/<slug>.md | specs/<modulo>/<n>-<slug>.md | implantação

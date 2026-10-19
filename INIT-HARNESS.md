@@ -1,6 +1,6 @@
 # INIT-HARNESS.md
 
-> **harness_version: 5.1.0**
+> **harness_version: 5.1.1**
 > Protocolo de operação genérico, válido para qualquer projeto. O que o projeto **é** fica em `CLAUDE.md` e `docs/ai/`. Aqui fica **como** operar. Este arquivo não é editado por projeto.
 
 ---
@@ -43,7 +43,7 @@
 
 ```json
 {
-  "harness_version": "5.1.0",
+  "harness_version": "5.1.1",
   "modo": "proprio",
   "instalado_em": "AAAA-MM-DD",
   "providers": ["claude", "codex"],

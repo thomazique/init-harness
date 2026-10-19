@@ -198,6 +198,33 @@ class InstallerTest(unittest.TestCase):
                 self.assertEqual([], doctor.avisos_de_skill(arquivo.parent.name, meta, texto))
         self.assertEqual([], doctor.colisoes(descricoes))
 
+    def test_agentes_do_kit_declaram_ferramentas_com_o_nome_exato_do_claude_code(self) -> None:
+        conhecidas = {"Read", "Grep", "Glob", "Bash", "Edit", "Write", "Skill", "WebFetch", "WebSearch"}
+        for arquivo in sorted((KIT / ".claude/agents").glob("*.md")):
+            linha = next(x for x in arquivo.read_text(encoding="utf-8").splitlines() if x.startswith("tools:"))
+            ferramentas = [t.strip() for t in linha.split(":", 1)[1].strip().strip("[]").split(",") if t.strip()]
+            with self.subTest(agente=arquivo.name):
+                self.assertTrue(ferramentas)
+                self.assertLessEqual(set(ferramentas), conhecidas)
+
+    def test_doctor_ignora_ids_dentro_de_comentario_html(self) -> None:
+        sys.path.insert(0, str(KIT / ".claude/hooks"))
+        try:
+            import doctor
+        finally:
+            sys.path.remove(str(KIT / ".claude/hooks"))
+        template = (KIT / ".claude/skills/init-harness/templates/DECISOES.template.md").read_text(encoding="utf-8")
+        with tempfile.TemporaryDirectory() as tmp:
+            decisoes = Path(tmp) / "DECISOES.md"
+            exemplo_antigo = template.replace("D-XXXX —", "D-0001 —")
+            decisoes.write_text(exemplo_antigo + "\n## D-0001 — primeira decisão real\n", encoding="utf-8")
+            self.assertEqual({}, doctor._duplicate_ids(decisoes, r"^##\s+(D-\d+)\b"))
+            decisoes.write_text(
+                template + "\n## D-0001 — real\n\n## D-0001 — repetida\n<!-- ## D-0001 — nota -->\n", encoding="utf-8"
+            )
+            base = len(template.splitlines())
+            self.assertEqual({"D-0001": [base + 2, base + 4]}, doctor._duplicate_ids(decisoes, r"^##\s+(D-\d+)\b"))
+
     def test_doctor_avisa_skill_sem_gatilho_negativo_e_colisao_sem_reprovar(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
 

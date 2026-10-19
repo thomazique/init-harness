@@ -1,5 +1,13 @@
 # Changelog
 
+## 5.1.1 — correções do agente auditor, do esforço via CLI e do doctor
+
+### Corrigido
+
+- `auditor-pilares` não iniciava: o frontmatter listava as ferramentas em minúsculas (`[read, grep, glob, bash]`); agora usa os nomes exatos do Claude Code (`Read, Grep, Glob, Bash`).
+- O runner CLI ignorava `raciocinio` nos perfis do Claude; agora passa `--effort <nível>`. O valor é validado contra o enum do schema (`low`, `medium`, `high`, `xhigh`) para Claude e Codex, porque o CLI do Claude ignora em silêncio um valor desconhecido.
+- O `doctor` contava o modelo de entrada comentado do `DECISOES.md` como ID duplicado da primeira decisão real; IDs dentro de comentário HTML deixam de contar. O exemplo do template passou a usar `D-XXXX`.
+
 ## 5.1.0 — integridade de gates, depuração por causa raiz e guardrails mais amplos
 
 Práticas adaptadas do gstack (MIT) e do Anthropic-Cybersecurity-Skills (Apache-2.0); origem em `NOTICE.md`.
