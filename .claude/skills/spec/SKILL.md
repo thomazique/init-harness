@@ -31,7 +31,7 @@ camadas: [banco, backend, rota, frontend]
 target_nodes:
   - <Nó>
 files:
-  - <path>
+  - <path explícito de arquivo>
 blast_radius:
   same_module: []
   cross_module: []
@@ -64,6 +64,8 @@ verificacao:
 - Com grafo: `graphify query "<descrição da tarefa>"` e `graphify explain "<nó>"` para localizar os nós.
 - Sem grafo: busca e leitura, declarando `grafo: manual`.
 - Schema, assinatura ou contrato não confirmado em código real: **parar e pedir o trecho**. Não estimar.
+- `files` contém só paths explícitos de arquivo, relativos ao repositório e um por item: sem glob (`*`, `**`), sem seta (`->`) e sem diretório. Supervisores copiam essa lista para as tarefas da orquestração, e o runner recusa outra notação.
+- Mover arquivo: declare o path de origem e o de destino como itens separados (`reader/a.ts` e `apps/site/a.ts`). Para mover muitos arquivos, liste cada par ou divida a mudança em tarefas menores.
 
 ### `blast_radius`
 

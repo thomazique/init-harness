@@ -1,5 +1,29 @@
 # Changelog
 
+## 5.1.2 — orquestração com Codex, reparo de formato e retomada
+
+Correções vindas de uma execução real no Windows com supervisor e construtor Codex, em que duas iniciativas e 14 chamadas terminaram sem nada integrado.
+
+### Corrigido
+
+- `codex exec` atual recusa `--ask-for-approval`; o runner passa `--config approval_policy="never"`.
+- A integração copiava o arquivo do próprio repositório principal, e não do worktree do construtor, e por isso nenhuma tarefa concluída chegava ao repositório. Existia desde a 5.0.0 e não era visível porque nenhum teste percorria a iniciativa inteira; agora um teste de ponta a ponta com CLI falso cobre o fluxo.
+- `git status -z` traz a origem de uma renomeação numa entrada sem prefixo de status; o runner cortava esse caminho e acusava arquivo inexistente fora do escopo depois de um `git mv`.
+- Saídas do ambiente (`graphify-out/`, `.init-harness/skills/`, `__pycache__`, além de `.init-harness/state/`) não pausam mais a construção como "repositório principal mudou" nem contam no worktree do construtor. `caminhos_ignorados` em `orquestracao.json` acrescenta outras.
+- Hooks escrevem e leem UTF-8 também em console Windows com outra página de código; mensagens como "Há código alterado" chegavam com acentos quebrados.
+- JSON em cerca de código com fim de linha CRLF não era reconhecido.
+
+### Adicionado
+
+- Codex recebe `--output-schema` por etapa (plano, alinhamento, consulta, fechamento, construtor e auditoria), gerado a partir de `$defs` de `orquestracao.schema.json`; o schema ganhou `consulta_construtor` e `auditoria_supervisor`.
+- Todos os prompts de etapa dizem que os campos descritivos são listas de strings, com exemplo; objetos nessas listas são convertidos em texto JSON em vez de reprovar a resposta.
+- Resposta reprovada na validação recebe um reparo de formato somente leitura, que não conta em `max_calls` (fica em `repair_calls`). Um trecho truncado da resposta reprovada fica em `invalid_responses` do estado.
+- Construtor recusado ou bloqueado deixa em `build_attempts` o motivo, os arquivos fora do escopo e `risks`/`questions`; ao retomar, a tentativa vai para `build_history`. Arquivo que o Git ignora e o construtor relata fica em `generated_files_ignored`.
+- O manifesto é copiado para `.init-harness/state/orquestracao/<id>/manifesto.json`; `--retomar <initiative_id>` retoma sem o arquivo original e, sem perguntas pendentes, refaz a etapa pausada (construtor bloqueado, repositório que mudou).
+- Depois dos planos, o runner confere se `max_calls` cobre o restante do fluxo e para com a conta antes de gastar chamadas. Mudar só `limits` não troca a identidade da iniciativa; aumente o valor e rode de novo.
+- Prompt do supervisor e skill `spec` exigem em `files` paths explícitos, um por item, sem glob nem seta; mover arquivo declara origem e destino.
+- `gate_diff`: linha com `gate-ok: <motivo>` sai da marcação e o motivo vira nota do trecho; blocos do `graphify hook install` não são marcados.
+
 ## 5.1.1 — correções do agente auditor, do esforço via CLI e do doctor
 
 ### Corrigido

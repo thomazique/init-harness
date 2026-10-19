@@ -87,6 +87,7 @@ def main() -> int:
                 + ") sem docs/ai/ESTRUTURA.md em stage."
             )
 
+    L.forcar_utf8()
     for a in dict.fromkeys(avisos):
         print(f"harness [aviso] {a}", file=sys.stderr)
     for e in dict.fromkeys(erros):

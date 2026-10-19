@@ -1,6 +1,6 @@
 # INIT-HARNESS.md
 
-> **harness_version: 5.1.1**
+> **harness_version: 5.1.2**
 > Protocolo de operação genérico, válido para qualquer projeto. O que o projeto **é** fica em `CLAUDE.md` e `docs/ai/`. Aqui fica **como** operar. Este arquivo não é editado por projeto.
 
 ---
@@ -14,7 +14,7 @@
 5. **Grafo antes de leitura, leitura antes de agente.** Estrutura se descobre com ferramenta determinística, não lendo arquivo por arquivo nem delegando exploração a subagente.
 6. **Específico vence genérico.** `CLAUDE.md` pode adaptar defaults deste protocolo ao projeto (por exemplo branch e PR), mas nunca enfraquecer segurança, política de negócio ou proteção de dados sem confirmação explícita do usuário.
 7. **Afirmação exige evidência.** Execução alegada cita o comando e o resultado observado; comando com stderr silenciado não serve de prova. Dizer o tipo de evidência (leitura estática, teste unitário, fixture, execução real, produção) e nunca passar um por outro: mock não é verificação real. Falha ou cobertura ausente que mudaria a conclusão é declarada. Resultado nulo verificado ("rodei X, nada encontrado") é resultado; afirmação positiva sem suporte é pior que silêncio. Relatório de subagente é afirmação até ser conferido.
-8. **Gate não se afrouxa para passar.** Apagar ou pular teste, aumentar timeout ou retry, baixar limiar, trocar contagem exata por limite, adicionar `# noqa`/`@ts-ignore`, engolir exceção ou usar `--no-verify` são decisões humanas nomeadas, com motivo na PR, nunca atalho do agente. `.claude/hooks/gate_diff.py` lista esses trechos no diff.
+8. **Gate não se afrouxa para passar.** Apagar ou pular teste, aumentar timeout ou retry, baixar limiar, trocar contagem exata por limite, adicionar `# noqa`/`@ts-ignore`, engolir exceção ou usar `--no-verify` são decisões humanas nomeadas, com motivo na PR, nunca atalho do agente. `.claude/hooks/gate_diff.py` lista esses trechos no diff; justificativa que precisa ficar no código vai na linha como `gate-ok: <motivo>`, que o scanner mostra como nota no lugar da marca.
 
 ---
 
@@ -43,7 +43,7 @@
 
 ```json
 {
-  "harness_version": "5.1.1",
+  "harness_version": "5.1.2",
   "modo": "proprio",
   "instalado_em": "AAAA-MM-DD",
   "providers": ["claude", "codex"],
@@ -349,7 +349,7 @@ Política é regra deliberada que só este projeto tem, declarada pelo dono do p
 - Cada construtor trabalha em worktree temporário. O runner rejeita arquivos fora do escopo, verifica se o repositório principal mudou e integra somente os arquivos autorizados. Arquivos atribuídos que já estavam alterados bloqueiam o despacho.
 - Construtores executam e relatam as verificações solicitadas. Supervisores auditam suas specs. O chefe confere os diffs e relatórios sem rodar testes e pode aprovar, pedir esclarecimento ou solicitar revisão direcionada via `--decisao-chefe`.
 - Perguntas humanas são registradas no estado local. Responda todas no arquivo JSON do schema `.init-harness/schema/respostas.schema.json` e retome com `python .claude/skills/orquestrar/scripts/invocar_agentes.py --iniciativa <manifesto.json> --respostas <respostas.json>`. O runner reexecuta apenas a etapa bloqueada e preserva os resultados concluídos. Mantenha o manifesto idêntico durante a retomada.
-- O estado operacional fica em `.init-harness/state/orquestracao/<initiative_id>/`. Registra planos, relatórios e decisões humanas necessárias à retomada; não grava prompts nem respostas completas dos agentes. Git permanece a fonte de verdade das alterações.
+- O estado operacional fica em `.init-harness/state/orquestracao/<initiative_id>/`. Registra planos, relatórios e decisões humanas necessárias à retomada; não grava prompts nem respostas completas dos agentes; de resposta reprovada na validação guarda só um trecho truncado (`invalid_responses`). Git permanece a fonte de verdade das alterações.
 - O runner hierárquico requer os papéis em modo `cli`; perfis legados `coordenador`, `auditor` e `executor` servem como fallback para chefe, supervisor e construtor. `--lote` continua aceitando o protocolo legado. Limites do manifesto controlam volume e concorrência, não custo monetário.
 - Uma execução pode coordenar várias frentes e repositórios locais. O estado ainda não sincroniza entre máquinas; equipes distribuídas precisam de branches/worktrees separadas e integração Git sequencial.
 - Agentes não fazem commit, push, merge, release, deploy ou ação destrutiva. Subagentes não escrevem em `docs/ai/`; o chefe mantém esses registros e a auditoria final.

@@ -130,6 +130,39 @@ class MarcasTest(unittest.TestCase):
         self.assertEqual(["RH-1"], marcas(apagado)["tests/test_b.py"])
 
 
+class ExcecoesVisiveisTest(unittest.TestCase):
+    HOOK = [
+        "#!/bin/sh",
+        "# graphify-hook-start",
+        "    except Exception:",
+        "        pass",
+        "# graphify-hook-end",
+    ]
+
+    def test_bloco_do_graphify_nao_e_marcado(self) -> None:
+        trecho = G.analisar("", {".githooks/post-commit": "\n".join(self.HOOK) + "\n"})["trechos"]
+        self.assertEqual([], trecho)
+        fora = self.HOOK + ["try:", "    x()", "except Exception: pass"]
+        self.assertEqual(["RH-16"], marcas("", {".githooks/post-commit": "\n".join(fora)})[".githooks/post-commit"])
+
+    def test_hunk_sem_marcador_usa_o_arquivo(self) -> None:
+        texto = diff(".githooks/post-commit", [], ["    except Exception:", "        pass"])
+        self.assertEqual(["RH-16"], marcas(texto)[".githooks/post-commit"])
+        resultado = G.analisar(texto, leitor=lambda caminho: "\n".join(self.HOOK))
+        self.assertEqual([], resultado["trechos"])
+
+    def test_gate_ok_vira_nota_no_lugar_da_marca(self) -> None:
+        texto = diff("src/a.py", [], ["except OSError:  # gate-ok: hook não pode falhar", "    pass"])
+        resultado = G.analisar(texto)
+        self.assertEqual([], resultado["trechos"])
+        ci = ".github/workflows/ci.yml"
+        texto = diff(ci, ["    timeout-minutes: 10"], ["    timeout-minutes: 30  # gate-ok: build medido em 22 min"])
+        trecho = G.analisar(texto)["trechos"][0]
+        self.assertEqual([], trecho["marcas"])
+        self.assertEqual("lido", trecho["nivel"])  # removeu linha em caminho de gate: o auditor lê a nota
+        self.assertIn("gate-ok: build medido em 22 min", trecho["notas"])
+
+
 class NiveisTest(unittest.TestCase):
     def test_teste_adicionado_e_inventario_nao_leitura(self) -> None:
         trecho = G.analisar(diff("tests/test_a.py", [], ["def test_novo():", "    assert f()"]))["trechos"][0]

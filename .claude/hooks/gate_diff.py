@@ -14,7 +14,9 @@ Três níveis, nunca misturados:
 - achado: trecho lido que falha na pergunta. Decisão humana, nunca correção automática.
 
 A marca é factual e não julga nem suprime: teste apagado junto com o código que ele cobria
-continua marcado; o julgamento é de quem audita.
+continua marcado; o julgamento é de quem audita. Duas exceções, ambas visíveis no relatório:
+linha com `gate-ok: <motivo>` fica fora da marcação e o motivo vira nota do trecho; bloco
+gerado por ferramenta (marcadores do `graphify hook install`) não é código do projeto.
 
   RH-1   teste removido ou desativado        RH-13  pragma de supressão adicionado
   RH-3   snapshot mudou sem o teste dono     RH-14  gate contornado
@@ -38,7 +40,8 @@ import json
 import re
 import subprocess
 import sys
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 sys.dont_write_bytecode = True  # não gerar __pycache__ no projeto
@@ -113,6 +116,14 @@ PROSA = re.compile(r"\.(?:md|mdx|markdown|txt|rst|adoc|asciidoc)(?:\.tmpl)?$", r
 GERADO = re.compile(
     r"(?:^|/)(?:dist|build|vendor|node_modules|\.yarn)/|\.min\.(?:js|css)$|(?:^|/)[^/]*lock(?:\.json|\.yaml|b)?$",
     re.IGNORECASE,
+)
+
+# Justificativa escrita no próprio código, para o auditor ler: `except OSError:  # gate-ok: hook não pode falhar`.
+JUSTIFICATIVA = re.compile(r"\bgate-ok:\s*(\S.*)$")
+# Blocos que ferramentas de terceiros escrevem com marcadores de início e fim.
+GERADORES = (
+    ("# graphify-hook-start", "# graphify-hook-end"),
+    ("# graphify-checkout-hook-start", "# graphify-checkout-hook-end"),
 )
 
 DECLARACAO_TESTE = re.compile(
@@ -403,7 +414,40 @@ def _ordem(marca: str) -> tuple[int, str]:
     return int(re.sub(r"\D", "", marca) or 0), marca
 
 
-def marcar(t: Trecho, todos: set[str]) -> None:
+def linhas_geradas(texto: str) -> set[str]:
+    """Linhas (sem espaços nas pontas) dentro de blocos com marcadores de gerador conhecidos."""
+    linhas: set[str] = set()
+    fim: str | None = None
+    for linha in texto.splitlines():
+        limpa = linha.strip()
+        if fim is None:
+            fim = next((f for inicio, f in GERADORES if limpa == inicio), None)
+        if fim is not None:
+            linhas.add(limpa)
+            if limpa == fim:
+                fim = None
+    return linhas
+
+
+def marcar(t: Trecho, todos: set[str], geradas: set[str] | None = None) -> None:
+    """Marca o trecho sem as linhas justificadas com gate-ok nem as de bloco gerado; ambas viram nota."""
+    geradas = geradas or set()
+    motivos = [m.group(1).strip() for linha in t.adicionadas if (m := JUSTIFICATIVA.search(linha))]
+    de_gerador = sum(1 for linha in t.adicionadas if linha.strip() in geradas)
+    avaliadas = [linha for linha in t.adicionadas if linha.strip() not in geradas and not JUSTIFICATIVA.search(linha)]
+    # A justificativa cobre o par: o valor antigo da mesma chave de gate sai junto da avaliação.
+    chaves = {c[0] for linha in t.adicionadas if JUSTIFICATIVA.search(linha) and (c := chave_de_gate(linha))}
+    removidas = [linha for linha in t.removidas if not (c := chave_de_gate(linha)) or c[0] not in chaves]
+    alvo = replace(t, adicionadas=avaliadas, removidas=removidas, marcas=[], notas=[])
+    _marcar(alvo, todos)
+    t.marcas, t.notas = alvo.marcas, alvo.notas
+    if motivos:
+        t.notas.append("gate-ok: " + "; ".join(motivos))
+    if de_gerador:
+        t.notas.append(f"{de_gerador} linha(s) de bloco gerado (graphify) fora da marcação")
+
+
+def _marcar(t: Trecho, todos: set[str]) -> None:
     marcas: set[str] = set()
     notas: list[str] = []
     produto = t.classe != "teste"
@@ -495,8 +539,17 @@ def ler_diff(texto: str) -> list[Trecho]:
     return trechos
 
 
-def analisar(texto_diff: str, novos: dict[str, str] | None = None, config: dict | None = None) -> dict:
-    """Classifica e marca os trechos de um diff unificado e de arquivos novos não rastreados."""
+def analisar(
+    texto_diff: str,
+    novos: dict[str, str] | None = None,
+    config: dict | None = None,
+    leitor: Callable[[str], str] | None = None,
+) -> dict:
+    """Classifica e marca os trechos de um diff unificado e de arquivos novos não rastreados.
+
+    `leitor` devolve o conteúdo de um caminho; só é chamado para trecho marcado, em busca de bloco gerado
+    que o hunk mostra pela metade.
+    """
     trechos = ler_diff(texto_diff)
     for caminho, corpo in (novos or {}).items():
         trechos.append(Trecho(caminho=caminho, cabecalho="arquivo novo", adicionadas=corpo.splitlines()))
@@ -506,7 +559,12 @@ def analisar(texto_diff: str, novos: dict[str, str] | None = None, config: dict 
         if t.classe is None and _partes(t.caminho)[-1].lower() in CONFIG_SECIONADA:
             if _trecho_em_secao_de_ferramenta(t.caminho, t.contexto + t.removidas + t.adicionadas):
                 t.classe = "config"
-        marcar(t, todos)
+        geradas = linhas_geradas("\n".join(t.adicionadas))
+        marcar(t, todos, geradas)
+        if t.marcas and leitor is not None:
+            do_arquivo = linhas_geradas(leitor(t.caminho))
+            if do_arquivo - geradas:
+                marcar(t, todos, geradas | do_arquivo)
         removeu_declaracao = any(DECLARACAO_TESTE.search(linha) for linha in t.removidas)
         if t.classe or t.marcas or removeu_declaracao:
             t.nivel = "lido" if t.marcas or (t.classe and t.removidas) else "listado"
@@ -586,7 +644,17 @@ def varrer(raiz: Path, staged: bool = False, base: str | None = None, caminhos: 
     else:
         texto = _git(raiz, *opcoes, "HEAD", "--", *caminhos)
         novos = _novos(raiz, caminhos)
-    return analisar(texto, novos, config_do_projeto(raiz))
+
+    def leitor(nome: str) -> str:
+        try:
+            if staged or base:
+                return _git(raiz, "show", f"{'' if staged else 'HEAD'}:{nome}")
+            arquivo = raiz / nome
+            return arquivo.read_text(encoding="utf-8") if arquivo.stat().st_size <= 1_000_000 else ""
+        except (OSError, UnicodeDecodeError, RuntimeError, subprocess.SubprocessError):
+            return ""
+
+    return analisar(texto, novos, config_do_projeto(raiz), leitor)
 
 
 def formatar(resultado: dict, max_linhas: int = 30) -> str:
